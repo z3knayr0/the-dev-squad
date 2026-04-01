@@ -9,8 +9,4 @@ This is the PUBLIC open-source repo. MIT licensed. No paid assets.
 - No moonpay/moonite references
 - Pipeline files live in pipeline/ subfolder
 
-The PRIVATE version with pixel art sprites and full features is in two separate repos:
-- /Users/johnknopf/Projects/buildui (pipeline backend)
-- /Users/johnknopf/Projects/aidevteam-viewer (pixel art viewer)
-
-Do NOT copy paid assets from the private repos into this one. Do NOT add idle conversation scripts here.
+Do NOT add paid sprite assets to this repo. Do NOT add idle conversation scripts.
