@@ -1,10 +1,11 @@
 import { readFileSync, readdirSync, statSync, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
 const BUILDS_DIR = join(homedir(), 'Builds');
 const STAGING_DIR = join(BUILDS_DIR, '.staging');
+const MANUAL_DIR = join(BUILDS_DIR, '.manual');
 
 const EMPTY_STATE = {
   concept: '', projectDir: '', currentPhase: 'concept', activeAgent: '',
@@ -17,7 +18,7 @@ const EMPTY_STATE = {
 function findLatestProject(): string | null {
   try {
     const dirs = readdirSync(BUILDS_DIR)
-      .filter(name => name !== '.staging')
+      .filter(name => name !== '.staging' && name !== '.manual')
       .map(name => join(BUILDS_DIR, name))
       .filter(p => {
         try { return statSync(p).isDirectory() && statSync(join(p, 'pipeline-events.json')).isFile(); }
@@ -28,8 +29,22 @@ function findLatestProject(): string | null {
   } catch { return null; }
 }
 
-export async function GET() {
-  // Check staging first — if it exists, Phase 0 is active
+export async function GET(req: NextRequest) {
+  const mode = req.nextUrl.searchParams.get('mode') || 'pipeline';
+
+  // Manual mode — read from .manual directory
+  if (mode === 'manual') {
+    const manualEvents = join(MANUAL_DIR, 'manual-state.json');
+    if (existsSync(manualEvents)) {
+      try {
+        const data = readFileSync(manualEvents, 'utf8');
+        return NextResponse.json(JSON.parse(data));
+      } catch {}
+    }
+    return NextResponse.json(EMPTY_STATE);
+  }
+
+  // Pipeline mode — check staging first, then real projects
   const stagingEvents = join(STAGING_DIR, 'pipeline-events.json');
   if (existsSync(stagingEvents)) {
     try {
@@ -38,7 +53,6 @@ export async function GET() {
     } catch {}
   }
 
-  // Otherwise check real project dirs — only show if pipeline is actively running or completed
   const projectDir = findLatestProject();
   if (!projectDir) {
     return NextResponse.json(EMPTY_STATE);

@@ -4,7 +4,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.1.2-blue" alt="Version" />
+  <img src="https://img.shields.io/badge/version-0.2.0-blue" alt="Version" />
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License" />
   <img src="https://img.shields.io/badge/claude-opus%204.6-blueviolet" alt="Claude Opus 4.6" />
   <img src="https://img.shields.io/badge/agents-5-orange" alt="5 Agents" />
@@ -118,33 +118,45 @@ That's it. The viewer handles everything — spawning agents, running the orches
 
 ---
 
-## How to Use
+## Two Modes
 
-### The UI
+The Dev Squad has two modes, toggled in the dashboard:
+
+### Pipeline Mode (default)
+
+The autonomous build pipeline. You describe what you want, and 5 agents build it without your involvement.
+
+1. **Reset** — Clear any previous session
+2. **Talk to the Planner** — Type your concept in Agent A's panel. A asks clarifying questions until the scope is clear.
+3. **Start the Pipeline** — Click **START**. The orchestrator runs A→B→C→D autonomously. A writes the plan, B reviews it, C codes it, D tests it.
+4. **Watch** — Each panel auto-scrolls as events come in. Click any panel to expand. The dashboard shows phase progress.
+5. **Stop** — Click **STOP** at any time to abort.
+6. **View Plan** — Once A writes the plan, click **View Plan** to read it.
+7. **Done** — Your project is in `~/Builds/<project-name>/`.
+
+After the build, chat with any agent for post-build work — fixing bugs, adding features, asking questions.
+
+### Manual Mode
+
+You are the orchestrator. 5 panels, 5 Claude sessions, each with a specialty. You talk to whoever you want, whenever you want. No automation, no phases, no pipeline.
+
+- **No START/STOP** — there's no pipeline to run. You direct everything.
+- **Model picker** — Choose between Opus and Sonnet. Appears only in manual mode.
+- **Hand off →** — Each panel has a handoff button. Click it to grab that agent's last response and stage it as context for the next agent you message. One click to pass work between agents.
+- **Per-agent chat** — Each panel has its own send button. You can talk to multiple agents at once — they run independently.
+- **No role files** — Agents don't follow pipeline templates or checklists. They're just Claude sessions with expertise labels (planning, code review, coding, testing, diagnostics). You decide what they do.
+
+Manual mode is useful when you want the multi-panel workspace without the automation — prototyping, brainstorming, or running your own workflow.
+
+## The UI
 
 The screen is split into two sections:
 
-**Top half** — A pixel art office with 5 agents at desks. They animate in real-time as they work. Below the office is a live feed showing every event from every agent. To the right is a dashboard with phase progress, elapsed time, and controls.
+**Top half** — A pixel art office with 5 agents at desks. They animate in real-time as they work. Below the office is a live feed showing every event from every agent. To the right is a dashboard with the mode toggle, agent status, and controls.
 
 **Bottom half** — A 5-panel grid. The **S (Supervisor)** panel spans the left column. The **A, B, C, D** panels fill the right in a 2x2 grid. Each panel shows that agent's activity and has its own chat input at the bottom.
 
-### Step by Step
-
-**1. Reset** — Click the **Reset** button to clear any previous session. This gives you a clean slate.
-
-**2. Talk to the Planner** — Click on **Agent A's panel** (top-left of the 4-panel grid, labeled "Planner"). Type your concept in the chat input at the bottom of A's panel and hit Send. Tell A what you want to build. A will ask clarifying questions — answer them until A says it's ready.
-
-**3. Start the Pipeline** — Click **START**. The orchestrator takes over. A writes the plan, B reviews it, C codes it, D tests it. You watch it all happen in real-time across the panels.
-
-**4. Watch** — Each panel auto-scrolls as events come in. Click any A-D panel to expand it into a full scrollable modal for more detail. The dashboard shows which phase you're in and tracks progress.
-
-**5. Stop (if needed)** — Click **STOP** at any time to abort the pipeline. This kills the orchestrator and all agent sessions immediately.
-
-**6. View Plan** — Once A has written the plan, a **View Plan** button appears. Click it to read the full build plan in a modal.
-
-**7. Done** — When the pipeline completes, your project is in `~/Builds/<project-name>/`. The dashboard shows "COMPLETE" and you'll hear a notification chime.
-
-### After the Build
+### After the Build (Pipeline Mode)
 
 Once the build is complete, you can chat directly with any agent for post-build work. Click on C's panel and ask it to fix a bug. Click on D's panel and ask it to run more tests. Each agent retains context from the build.
 
@@ -154,12 +166,15 @@ The S panel on the left is **not** part of the pipeline. S is your diagnostic as
 
 ### Controls Reference
 
-| Button | What It Does |
-|--------|-------------|
-| **START** | Creates a project directory from your concept, spawns the orchestrator, begins the autonomous pipeline |
-| **STOP** | Kills the orchestrator and all active agent sessions immediately |
-| **Reset** | Stops everything, clears the staging area, resets any stuck projects. Use before starting a new build. |
-| **View Plan** | Opens the current `plan.md` in a modal (appears after A writes the plan) |
+| Control | Mode | What It Does |
+|---------|------|-------------|
+| **PIPELINE / MANUAL** | Both | Toggle between autonomous pipeline and manual orchestration |
+| **Model Picker** | Manual | Choose Claude model (Opus or Sonnet) |
+| **START** | Pipeline | Creates project directory, spawns orchestrator, begins autonomous build |
+| **STOP** | Pipeline | Kills orchestrator and all agent sessions immediately |
+| **Reset** | Both | Clears all state. In pipeline mode, also stops the orchestrator. |
+| **View Plan** | Pipeline | Opens `plan.md` in a modal (appears after A writes the plan) |
+| **Hand off →** | Manual | Stages the agent's last response as context for the next agent you message |
 
 ---
 

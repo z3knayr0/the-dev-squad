@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 
 export type AgentId = 'A' | 'B' | 'C' | 'D' | 'S';
 export type Phase = 'concept' | 'planning' | 'plan-review' | 'coding' | 'code-review' | 'testing' | 'deploy' | 'complete';
+export type AppMode = 'pipeline' | 'manual';
 
 export interface PipelineEvent {
   time: string;
@@ -46,7 +47,13 @@ const EMPTY_STATE: PipelineState = {
   events: [],
 };
 
-export function usePipelineState(pollInterval = 400) {
+interface UsePipelineOptions {
+  pollInterval?: number;
+  mode: AppMode;
+  model: string;
+}
+
+export function usePipelineState({ pollInterval = 400, mode, model }: UsePipelineOptions) {
   const [state, setState] = useState<PipelineState>(EMPTY_STATE);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,7 +62,7 @@ export function usePipelineState(pollInterval = 400) {
 
     async function poll() {
       try {
-        const res = await fetch('/api/state?_=' + Date.now());
+        const res = await fetch(`/api/state?mode=${mode}&_=${Date.now()}`);
         if (!res.ok) return;
         const data = await res.json();
         if (active) {
@@ -70,16 +77,16 @@ export function usePipelineState(pollInterval = 400) {
     poll();
     const interval = setInterval(poll, pollInterval);
     return () => { active = false; clearInterval(interval); };
-  }, [pollInterval]);
+  }, [pollInterval, mode]);
 
   const sendChat = useCallback(async (agent: AgentId, message: string) => {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agent, message }),
+      body: JSON.stringify({ agent, message, mode, model }),
     });
     return res.json();
-  }, []);
+  }, [mode, model]);
 
   const startPipeline = useCallback(async () => {
     const res = await fetch('/api/start-pipeline', { method: 'POST' });
@@ -107,6 +114,15 @@ export function usePipelineState(pollInterval = 400) {
     return data.content as string | null;
   }, []);
 
+  const resetState = useCallback(async () => {
+    const res = await fetch('/api/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode }),
+    });
+    return res.json();
+  }, [mode]);
+
   // Get events for a specific agent
   const agentEvents = useCallback((agent: AgentId) => {
     return state.events.filter(e => e.agent === agent);
@@ -128,6 +144,7 @@ export function usePipelineState(pollInterval = 400) {
     stopPipeline,
     approveBash,
     getPlan,
+    resetState,
     agentEvents,
     agentSpeech,
   };

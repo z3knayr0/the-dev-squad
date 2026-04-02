@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Card } from '@/components/shared/Card';
 import { Badge } from '@/components/shared/Badge';
 import { LunarOfficeScene } from '@/components/mission/LunarOfficeScene';
-import { usePipelineState, type AgentId } from '@/lib/use-pipeline';
+import { usePipelineState, type AgentId, type AppMode } from '@/lib/use-pipeline';
 
 const AGENT_NAMES: Record<AgentId, string> = {
   A: 'Planner', B: 'Reviewer', C: 'Coder', D: 'Tester', S: 'Supervisor',
@@ -28,14 +28,30 @@ const PHASE_PROGRESS: Record<string, number> = {
   deploy: 95, complete: 100,
 };
 
+const MODEL_OPTIONS = [
+  { value: 'claude-opus-4-6', label: 'Opus 4.6' },
+  { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
+];
+
+const MANUAL_ROLES: Record<string, string> = {
+  A: 'Software planning & architecture',
+  B: 'Code review & finding gaps',
+  C: 'Writing code',
+  D: 'Testing & debugging',
+  S: 'Oversight & diagnostics',
+};
+
 export default function PipelinePage() {
+  const [mode, setMode] = useState<AppMode>('pipeline');
+  const [selectedModel, setSelectedModel] = useState('claude-sonnet-4-6');
+
   const {
-    state, sendChat, startPipeline, stopPipeline, approveBash, getPlan, agentEvents, agentSpeech,
-  } = usePipelineState(400);
+    state, sendChat, startPipeline, stopPipeline, approveBash, getPlan, resetState, agentEvents, agentSpeech,
+  } = usePipelineState({ pollInterval: 400, mode, model: selectedModel });
 
   const [selectedAgent, setSelectedAgent] = useState<AgentId>('S');
   const [chatInput, setChatInput] = useState('');
-  const [sending, setSending] = useState(false);
+  const [sendingAgents, setSendingAgents] = useState<Set<AgentId>>(new Set());
   const [pipelineStarted, setPipelineStarted] = useState(false);
   const [pipelineRunning, setPipelineRunning] = useState(false);
   const [showPlan, setShowPlan] = useState(false);
@@ -43,6 +59,7 @@ export default function PipelinePage() {
   const [pendingApproval, setPendingApproval] = useState<Record<string, unknown> | null>(null);
   const [expandedAgent, setExpandedAgent] = useState<AgentId | null>(null);
   const [panelInputs, setPanelInputs] = useState<Record<string, string>>({ A: '', B: '', C: '', D: '' });
+  const [pendingHandoff, setPendingHandoff] = useState<{ from: AgentId; text: string } | null>(null);
 
   const panelRefs = useRef<Record<string, HTMLDivElement | null>>({ A: null, B: null, C: null, D: null, S: null });
   const modalRef = useRef<HTMLDivElement>(null);
@@ -50,9 +67,10 @@ export default function PipelinePage() {
   const prevCounts = useRef<Record<string, number>>({ A: 0, B: 0, C: 0, D: 0, S: 0 });
   const prevFeedCount = useRef(0);
 
+  const isPipeline = mode === 'pipeline';
+
   // Auto-scroll: all panels, expanded modal, and live feed
   useEffect(() => {
-    // A-D: scroll both the panel and the expanded modal if open
     for (const id of ['A', 'B', 'C', 'D'] as AgentId[]) {
       const events = agentEvents(id);
       if (events.length > prevCounts.current[id]) {
@@ -64,22 +82,21 @@ export default function PipelinePage() {
         prevCounts.current[id] = events.length;
       }
     }
-    // S panel — only S events
     const sEvents = agentEvents('S');
     const sEl = panelRefs.current.S;
     if (sEvents.length > prevCounts.current.S && sEl) {
       sEl.scrollTop = sEl.scrollHeight;
       prevCounts.current.S = sEvents.length;
     }
-    // Live feed
     if (state.events.length > prevFeedCount.current && feedRef.current) {
       feedRef.current.scrollTop = feedRef.current.scrollHeight;
       prevFeedCount.current = state.events.length;
     }
   }, [state.events.length, agentEvents, expandedAgent]);
 
-  // Detect pipeline completion
+  // Detect pipeline completion (pipeline mode only)
   useEffect(() => {
+    if (!isPipeline) return;
     if (state.buildComplete && pipelineRunning) {
       setPipelineRunning(false);
       try {
@@ -101,10 +118,11 @@ export default function PipelinePage() {
         new Notification('The Dev Squad', { body: 'Build complete!' });
       }
     }
-  }, [state.buildComplete, pipelineRunning]);
+  }, [state.buildComplete, pipelineRunning, isPipeline]);
 
-  // Poll for pending approvals
+  // Poll for pending approvals (pipeline mode only)
   useEffect(() => {
+    if (!isPipeline) return;
     const interval = setInterval(async () => {
       try {
         const res = await fetch('/api/pending?_=' + Date.now());
@@ -113,14 +131,14 @@ export default function PipelinePage() {
       } catch {}
     }, 500);
     return () => clearInterval(interval);
-  }, []);
+  }, [isPipeline]);
 
   async function handleSend() {
-    if (sending || !chatInput.trim()) return;
-    setSending(true);
+    if (sendingAgents.has('S') || !chatInput.trim()) return;
+    setSendingAgents(prev => new Set([...prev, 'S']));
     await sendChat('S', chatInput.trim());
     setChatInput('');
-    setSending(false);
+    setSendingAgents(prev => { const n = new Set(prev); n.delete('S'); return n; });
   }
 
   async function handleStartPipeline() {
@@ -140,30 +158,61 @@ export default function PipelinePage() {
   }
 
   async function handleReset() {
-    await fetch('/api/stop-pipeline', { method: 'POST' });
-    await fetch('/api/reset', { method: 'POST' });
+    if (isPipeline) {
+      await fetch('/api/stop-pipeline', { method: 'POST' });
+    }
+    await resetState();
     setPipelineStarted(false);
     setPipelineRunning(false);
     setSelectedAgent('S');
     setExpandedAgent(null);
     setChatInput('');
     setPanelInputs({ A: '', B: '', C: '', D: '' });
+    setPendingHandoff(null);
   }
 
   async function handlePanelSend(id: AgentId) {
-    const msg = panelInputs[id]?.trim();
-    if (sending || !msg) return;
-    setSending(true);
+    let msg = panelInputs[id]?.trim();
+    if (sendingAgents.has(id) || !msg) return;
+
+    // Prepend handoff context if pending
+    if (pendingHandoff && pendingHandoff.from !== id) {
+      msg = `[Handoff from Agent ${pendingHandoff.from}]: ${pendingHandoff.text}\n\n${msg}`;
+      setPendingHandoff(null);
+    }
+
+    setSendingAgents(prev => new Set([...prev, id]));
     setSelectedAgent(id);
     await sendChat(id, msg);
     setPanelInputs(prev => ({ ...prev, [id]: '' }));
-    setSending(false);
+    setSendingAgents(prev => { const n = new Set(prev); n.delete(id); return n; });
+  }
+
+  async function handleExpandedSend() {
+    if (!expandedAgent || sendingAgents.has(expandedAgent) || !chatInput.trim()) return;
+    let msg = chatInput.trim();
+
+    if (pendingHandoff && pendingHandoff.from !== expandedAgent) {
+      msg = `[Handoff from Agent ${pendingHandoff.from}]: ${pendingHandoff.text}\n\n${msg}`;
+      setPendingHandoff(null);
+    }
+
+    setSendingAgents(prev => new Set([...prev, expandedAgent]));
+    await sendChat(expandedAgent, msg);
+    setChatInput('');
+    setSendingAgents(prev => { const n = new Set(prev); n.delete(expandedAgent!); return n; });
+  }
+
+  function handleHandoff(fromAgent: AgentId) {
+    const textEvents = state.events.filter(e => e.agent === fromAgent && e.type === 'text');
+    if (textEvents.length === 0) return;
+    let text = textEvents[textEvents.length - 1].text;
+    if (text.length > 2000) text = text.slice(0, 2000) + '...(truncated)';
+    setPendingHandoff({ from: fromAgent, text });
   }
 
   const phase = state.currentPhase;
   const progress = PHASE_PROGRESS[phase] || 0;
-  const tokens = (state.usage?.inputTokens || 0) + (state.usage?.outputTokens || 0);
-  const cached = (state.usage?.cacheReadTokens || 0) + (state.usage?.cacheWriteTokens || 0);
 
   // Derived stats
   const firstEventTime = state.events.length > 0 ? new Date(state.events[0].time).getTime() : 0;
@@ -191,7 +240,6 @@ export default function PipelinePage() {
   })();
 
   const errorCount = state.events.filter(e => e.type === 'issue' || e.type === 'failure').length;
-  const warningCount = state.events.filter(e => e.type === 'question').length;
 
   return (
     <div className="p-4 space-y-4">
@@ -221,7 +269,7 @@ export default function PipelinePage() {
               className="flex-1 overflow-y-auto px-4 pb-2 font-mono [scrollbar-width:thin] [&::-webkit-scrollbar-thumb]:rounded-sm [&::-webkit-scrollbar-thumb]:bg-[#252530] [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar]:w-[3px]"
             >
               {state.events.length === 0 && (
-                <p className="py-4 text-center text-xs text-[#252530]">Waiting for pipeline events...</p>
+                <p className="py-4 text-center text-xs text-[#252530]">{isPipeline ? 'Waiting for pipeline events...' : 'Waiting for activity...'}</p>
               )}
               {state.events.map((e, i) => (
                 <div key={i} className="flex gap-2 py-[2px] text-[11px] leading-relaxed">
@@ -252,32 +300,68 @@ export default function PipelinePage() {
 
         {/* Dashboard */}
         <div className="flex flex-col gap-4 rounded-xl border border-white/10 bg-[linear-gradient(180deg,rgba(24,18,33,0.96),rgba(11,10,16,0.98))] p-5">
-          {/* Title + Phase */}
+          {/* Title + Mode Toggle */}
           <div>
             <h1 className="text-xl font-bold uppercase tracking-wider text-white">The Dev Squad</h1>
+            {/* Mode Toggle */}
             <div className="mt-2 flex items-center gap-2">
-              <Badge variant={PHASE_VARIANTS[phase] || 'neutral'}>
-                {PHASE_LABELS[phase] || phase}
-              </Badge>
-              {state.activeAgent && (
-                <Badge variant="purple">Agent {state.activeAgent}</Badge>
+              <div className="flex rounded-lg border border-white/10 bg-white/5">
+                <button
+                  onClick={() => setMode('pipeline')}
+                  className={`px-3 py-1 text-[10px] font-bold uppercase tracking-wider transition-all ${isPipeline ? 'bg-violet-600 text-white' : 'text-[#555] hover:text-[#888]'}`}
+                  style={{ borderRadius: '7px 0 0 7px' }}
+                >Pipeline</button>
+                <button
+                  onClick={() => setMode('manual')}
+                  className={`px-3 py-1 text-[10px] font-bold uppercase tracking-wider transition-all ${!isPipeline ? 'bg-blue-600 text-white' : 'text-[#555] hover:text-[#888]'}`}
+                  style={{ borderRadius: '0 7px 7px 0' }}
+                >Manual</button>
+              </div>
+              {/* Model Picker — manual mode only */}
+              {!isPipeline && (
+                <select
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 focus:border-blue-600 focus:outline-none"
+                >
+                  {MODEL_OPTIONS.map(opt => (
+                    <option key={opt.value} value={opt.value} className="bg-[#1a1a2a]">{opt.label}</option>
+                  ))}
+                </select>
               )}
-              {state.buildComplete && <Badge variant="success">COMPLETE</Badge>}
             </div>
           </div>
 
-          {/* Progress */}
-          <div>
-            <div className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-wider text-slate-500">
-              <span>Progress</span>
-              <span>{progress}%</span>
-            </div>
-            <div className="h-2 w-full overflow-hidden rounded-full bg-white/5">
-              <div className="h-full rounded-full bg-gradient-to-r from-violet-500 to-emerald-400 transition-all duration-700" style={{ width: `${progress}%` }} />
-            </div>
-          </div>
+          {/* Pipeline-only: Phase + Progress */}
+          {isPipeline && (
+            <>
+              <div className="flex items-center gap-2">
+                <Badge variant={PHASE_VARIANTS[phase] || 'neutral'}>
+                  {PHASE_LABELS[phase] || phase}
+                </Badge>
+                {state.activeAgent && (
+                  <Badge variant="purple">Agent {state.activeAgent}</Badge>
+                )}
+                {state.buildComplete && <Badge variant="success">COMPLETE</Badge>}
+              </div>
+              <div>
+                <div className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-wider text-slate-500">
+                  <span>Progress</span>
+                  <span>{progress}%</span>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-white/5">
+                  <div className="h-full rounded-full bg-gradient-to-r from-violet-500 to-emerald-400 transition-all duration-700" style={{ width: `${progress}%` }} />
+                </div>
+              </div>
+            </>
+          )}
 
-          {/* Agent Status */}
+          {/* Manual mode: simple label */}
+          {!isPipeline && (
+            <div className="text-[10px] uppercase tracking-wider text-blue-400">Manual Mode — You are the orchestrator</div>
+          )}
+
+          {/* Agent Status — both modes */}
           <div>
             <div className="mb-2 text-[10px] uppercase tracking-wider text-slate-500">Agents</div>
             <div className="grid grid-cols-5 gap-2">
@@ -301,56 +385,69 @@ export default function PipelinePage() {
             </div>
           </div>
 
-          {/* Stats */}
-          <div>
-            <div className="mb-2 text-[10px] uppercase tracking-wider text-slate-500">Pipeline</div>
-            <div className="grid grid-cols-2 gap-x-6 gap-y-1 font-mono text-xs">
-              <div className="flex justify-between"><span className="text-slate-500">Elapsed</span><span className="text-slate-400">{elapsed}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500">Files</span><span className="text-slate-400">{filesModified}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500">Events</span><span className="text-slate-400">{state.events.length}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500">Errors</span><span className={errorCount > 0 ? 'text-red-400' : 'text-[#333]'}>{errorCount}</span></div>
-            </div>
-          </div>
-
-          {/* Last Action */}
-          {lastAction && (
-            <div>
-              <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">Last Action</div>
-              <div className="truncate rounded-lg bg-white/5 px-3 py-2 font-mono text-[11px]">
-                <span className={`mr-1.5 font-bold ${
-                  lastAction.agent === 'A' ? 'text-violet-400' :
-                  lastAction.agent === 'B' ? 'text-blue-400' :
-                  lastAction.agent === 'C' ? 'text-yellow-400' :
-                  lastAction.agent === 'D' ? 'text-red-400' :
-                  'text-emerald-400'
-                }`}>{lastAction.agent}</span>
-                <span className="text-slate-400">{lastAction.text}</span>
+          {/* Pipeline-only: Stats, Last Action, Concept */}
+          {isPipeline && (
+            <>
+              <div>
+                <div className="mb-2 text-[10px] uppercase tracking-wider text-slate-500">Pipeline</div>
+                <div className="grid grid-cols-2 gap-x-6 gap-y-1 font-mono text-xs">
+                  <div className="flex justify-between"><span className="text-slate-500">Elapsed</span><span className="text-slate-400">{elapsed}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Files</span><span className="text-slate-400">{filesModified}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Events</span><span className="text-slate-400">{state.events.length}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Errors</span><span className={errorCount > 0 ? 'text-red-400' : 'text-[#333]'}>{errorCount}</span></div>
+                </div>
               </div>
-            </div>
+
+              {lastAction && (
+                <div>
+                  <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">Last Action</div>
+                  <div className="truncate rounded-lg bg-white/5 px-3 py-2 font-mono text-[11px]">
+                    <span className={`mr-1.5 font-bold ${
+                      lastAction.agent === 'A' ? 'text-violet-400' :
+                      lastAction.agent === 'B' ? 'text-blue-400' :
+                      lastAction.agent === 'C' ? 'text-yellow-400' :
+                      lastAction.agent === 'D' ? 'text-red-400' :
+                      'text-emerald-400'
+                    }`}>{lastAction.agent}</span>
+                    <span className="text-slate-400">{lastAction.text}</span>
+                  </div>
+                </div>
+              )}
+
+              {state.concept && (
+                <div>
+                  <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">Concept</div>
+                  <p className="text-xs leading-relaxed text-slate-400">{state.concept}</p>
+                </div>
+              )}
+            </>
           )}
 
-          {/* Concept */}
-          {state.concept && (
-            <div>
-              <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">Concept</div>
-              <p className="text-xs leading-relaxed text-slate-400">{state.concept}</p>
+          {/* Pending handoff indicator */}
+          {pendingHandoff && (
+            <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-blue-400">Handoff from Agent {pendingHandoff.from}</div>
+              <p className="mt-1 text-[11px] leading-relaxed text-blue-300/70">{pendingHandoff.text.slice(0, 100)}{pendingHandoff.text.length > 100 ? '...' : ''}</p>
+              <button onClick={() => setPendingHandoff(null)} className="mt-1 text-[9px] text-blue-400/50 hover:text-blue-400">Cancel</button>
             </div>
           )}
 
           {/* Spacer */}
           <div className="flex-1" />
 
-          {/* Controls — always visible */}
+          {/* Controls */}
           <div className="flex gap-2">
-            {!pipelineRunning && (
+            {isPipeline && !pipelineRunning && (
               <button onClick={handleStartPipeline} className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-bold text-black transition hover:bg-emerald-400">
                 START
               </button>
             )}
-            <button onClick={() => { setPipelineRunning(false); stopPipeline(); }} className="rounded-lg bg-red-500 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-400">
-              STOP
-            </button>
-            {state.events.some(e => e.text?.includes('plan.md')) && (
+            {isPipeline && (
+              <button onClick={() => { setPipelineRunning(false); stopPipeline(); }} className="rounded-lg bg-red-500 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-400">
+                STOP
+              </button>
+            )}
+            {isPipeline && state.events.some(e => e.text?.includes('plan.md')) && (
               <button onClick={handleViewPlan} className="rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm text-white hover:bg-white/10">
                 View Plan
               </button>
@@ -381,9 +478,9 @@ export default function PipelinePage() {
             }`} style={{ background: '#0e0e16' }}>S</div>
             <div>
               <div className="text-[13px] font-semibold text-[#999]">Supervisor</div>
-              <div className="text-[10px] text-[#444]">Chat here to direct the team</div>
+              <div className="text-[10px] text-[#444]">{isPipeline ? 'Chat here to direct the team' : 'Oversight & diagnostics'}</div>
             </div>
-            {state.events.some(e => e.text?.includes('plan.md')) && (
+            {isPipeline && state.events.some(e => e.text?.includes('plan.md')) && (
               <button onClick={handleViewPlan} className="ml-auto rounded border border-white/10 bg-white/5 px-2.5 py-0.5 text-[11px] text-white hover:bg-white/10">
                 View Plan
               </button>
@@ -394,7 +491,7 @@ export default function PipelinePage() {
             className="flex-1 space-y-px overflow-y-auto px-2.5 py-1.5 [scrollbar-width:thin] [&::-webkit-scrollbar-thumb]:rounded-sm [&::-webkit-scrollbar-thumb]:bg-[#252530] [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar]:w-[3px]"
           >
             {agentEvents('S').length === 0 && (
-              <p className="pt-16 text-center text-xs tracking-wider text-[#252530]">Chat with S to diagnose pipeline issues</p>
+              <p className="pt-16 text-center text-xs tracking-wider text-[#252530]">{isPipeline ? 'Chat with S to diagnose pipeline issues' : 'Chat with the Supervisor'}</p>
             )}
             {agentEvents('S').map((e, i) => (
               <div key={i} className={`rounded px-2 py-1 text-[11px] leading-relaxed ${
@@ -423,27 +520,26 @@ export default function PipelinePage() {
                 onChange={(e) => setChatInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSend()}
                 placeholder="Message Supervisor..."
-                disabled={sending}
+                disabled={sendingAgents.has('S')}
                 className="flex-1 rounded-lg border border-[#252530] bg-[#14141e] px-3 py-2 text-sm text-white placeholder-[#444] focus:border-emerald-600 focus:outline-none disabled:opacity-30"
               />
-              <button onClick={handleSend} disabled={sending || !chatInput.trim()} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-30">
+              <button onClick={handleSend} disabled={sendingAgents.has('S') || !chatInput.trim()} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-30">
                 Send
               </button>
             </div>
           </div>
         </div>
 
-        {/* A, B, C, D — fixed preview panels, click to expand */}
+        {/* A, B, C, D panels */}
         {(['A', 'B', 'C', 'D'] as AgentId[]).map((id) => {
           const events = agentEvents(id);
           const status = state.agentStatus[id] || 'idle';
           const isSelected = selectedAgent === id;
-          const AGENT_ROLES: Record<string, string> = {
-            A: 'Chat with A to discuss your build concept',
-            B: 'Pokes holes in the plan',
-            C: 'Follows the plan, writes the code',
-            D: 'Reviews code, runs tests',
-          };
+          const isSending = sendingAgents.has(id);
+          const AGENT_ROLES: Record<string, string> = isPipeline
+            ? { A: 'Chat with A to discuss your build concept', B: 'Pokes holes in the plan', C: 'Follows the plan, writes the code', D: 'Reviews code, runs tests' }
+            : { A: MANUAL_ROLES.A, B: MANUAL_ROLES.B, C: MANUAL_ROLES.C, D: MANUAL_ROLES.D };
+          const hasTextEvents = events.some(e => e.type === 'text');
           return (
             <div
               key={id}
@@ -466,18 +562,27 @@ export default function PipelinePage() {
                   <div className="text-[13px] font-semibold text-[#999]">{AGENT_NAMES[id]}</div>
                   <div className="text-[10px] text-[#444]">{AGENT_ROLES[id]}</div>
                 </div>
-                {events.length > 0 && (
-                  <span className="text-[10px] text-[#333]">{events.length} events</span>
-                )}
+                <div className="flex items-center gap-2">
+                  {/* Handoff button — manual mode only, only if agent has text output */}
+                  {!isPipeline && hasTextEvents && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleHandoff(id); }}
+                      className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[9px] text-blue-400 hover:bg-blue-500/10 hover:text-blue-300"
+                    >Hand off →</button>
+                  )}
+                  {events.length > 0 && (
+                    <span className="text-[10px] text-[#333]">{events.length} events</span>
+                  )}
+                </div>
               </div>
-              {/* Events — auto-scrolls, no scrollbar. Click panel to expand with scrollbar. */}
+              {/* Events */}
               <div
                 ref={(el) => { panelRefs.current[id] = el; }}
                 className="min-h-0 flex-1 overflow-y-auto px-2.5 py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
               >
                 {events.length === 0 && (
                   <p className="pt-8 text-center text-xs tracking-wider text-[#252530]">
-                    {id === 'A' ? 'Tell A what you want to build' : 'IDLE'}
+                    {isPipeline ? (id === 'A' ? 'Tell A what you want to build' : 'IDLE') : `Chat with the ${AGENT_NAMES[id]}`}
                   </p>
                 )}
                 <div className="space-y-px">
@@ -497,6 +602,12 @@ export default function PipelinePage() {
                     </div>
                   ))}
                 </div>
+                {/* Pending handoff indicator on target panel */}
+                {pendingHandoff && pendingHandoff.from !== id && (
+                  <div className="mt-2 rounded border border-blue-500/20 bg-blue-500/5 px-2 py-1 text-[10px] text-blue-400">
+                    Receiving handoff from Agent {pendingHandoff.from}
+                  </div>
+                )}
               </div>
               {/* Chat input */}
               <div className="flex-shrink-0 border-t border-[#1a1a2a] px-2.5 py-2" onClick={(e) => e.stopPropagation()}>
@@ -507,10 +618,10 @@ export default function PipelinePage() {
                     onChange={(e) => setPanelInputs(prev => ({ ...prev, [id]: e.target.value }))}
                     onKeyDown={(e) => e.key === 'Enter' && handlePanelSend(id)}
                     placeholder={`Message ${AGENT_NAMES[id]}...`}
-                    disabled={sending}
+                    disabled={isSending}
                     className="flex-1 rounded-md border border-[#252530] bg-[#14141e] px-2.5 py-1.5 text-xs text-white placeholder-[#444] focus:border-blue-600 focus:outline-none disabled:opacity-30"
                   />
-                  <button onClick={() => handlePanelSend(id)} disabled={sending || !panelInputs[id]?.trim()} className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-30">
+                  <button onClick={() => handlePanelSend(id)} disabled={isSending || !panelInputs[id]?.trim()} className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-30">
                     Send
                   </button>
                 </div>
@@ -524,7 +635,6 @@ export default function PipelinePage() {
       {expandedAgent && expandedAgent !== 'S' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80" onClick={() => setExpandedAgent(null)}>
           <div className="flex max-h-[80vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0e0e16]" onClick={(e) => e.stopPropagation()}>
-            {/* Modal header */}
             <div className="flex items-center gap-3 border-b border-white/10 px-6 py-4">
               <div className={`flex h-10 w-10 items-center justify-center rounded-xl border-2 text-sm font-bold ${
                 (state.agentStatus[expandedAgent] === 'active' || state.agentStatus[expandedAgent] === 'working')
@@ -537,7 +647,6 @@ export default function PipelinePage() {
               </div>
               <button onClick={() => setExpandedAgent(null)} className="text-2xl text-slate-500 hover:text-white">&times;</button>
             </div>
-            {/* Scrollable event log */}
             <div ref={modalRef} className="flex-1 space-y-px overflow-y-auto px-6 py-3 [scrollbar-width:thin] [&::-webkit-scrollbar-thumb]:rounded-sm [&::-webkit-scrollbar-thumb]:bg-[#252530] [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar]:w-[3px]">
               {agentEvents(expandedAgent).map((e, i) => (
                 <div key={i} className={`rounded px-3 py-1.5 text-xs leading-relaxed ${
@@ -555,19 +664,19 @@ export default function PipelinePage() {
                 </div>
               ))}
             </div>
-            {/* Chat input */}
+            {/* Modal chat — sends to expanded agent, not S */}
             <div className="flex-shrink-0 border-t border-white/10 px-6 py-4">
               <div className="flex gap-2">
                 <input
                   type="text"
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+                  onKeyDown={(e) => e.key === 'Enter' && handleExpandedSend()}
                   placeholder={`Message ${AGENT_NAMES[expandedAgent]}...`}
-                  disabled={sending}
+                  disabled={sendingAgents.has(expandedAgent)}
                   className="flex-1 rounded-lg border border-[#252530] bg-[#14141e] px-3 py-2 text-sm text-white placeholder-[#444] focus:border-blue-600 focus:outline-none disabled:opacity-30"
                 />
-                <button onClick={handleSend} disabled={sending || !chatInput.trim()} className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-30">
+                <button onClick={handleExpandedSend} disabled={sendingAgents.has(expandedAgent) || !chatInput.trim()} className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-30">
                   Send
                 </button>
               </div>
@@ -589,8 +698,8 @@ export default function PipelinePage() {
         </div>
       )}
 
-      {/* Approval Banner */}
-      {pendingApproval && (
+      {/* Approval Banner — pipeline only */}
+      {isPipeline && pendingApproval && (
         <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-xl border-2 border-amber-500 bg-[#1a1a2a] px-6 py-4 shadow-[0_0_30px_rgba(245,158,11,0.2)]">
           <p className="text-xs font-bold uppercase tracking-wider text-amber-400">
             {pendingApproval.tool as string} — Approval Required

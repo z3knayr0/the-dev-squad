@@ -1,22 +1,36 @@
 import { rmSync, existsSync, readdirSync, readFileSync, writeFileSync, statSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
 const BUILDS_DIR = join(homedir(), 'Builds');
 const STAGING_DIR = join(BUILDS_DIR, '.staging');
+const MANUAL_DIR = join(BUILDS_DIR, '.manual');
 
-export async function POST() {
+export async function POST(req: NextRequest) {
   try {
-    // Clear staging
+    let mode = 'pipeline';
+    try {
+      const body = await req.json();
+      mode = body.mode || 'pipeline';
+    } catch {}
+
+    if (mode === 'manual') {
+      // Manual mode — just delete the .manual directory
+      if (existsSync(MANUAL_DIR)) {
+        rmSync(MANUAL_DIR, { recursive: true, force: true });
+      }
+      return NextResponse.json({ ok: true });
+    }
+
+    // Pipeline mode — clear staging + reset active projects
     if (existsSync(STAGING_DIR)) {
       rmSync(STAGING_DIR, { recursive: true, force: true });
     }
 
-    // Reset any active project (non-concept, non-complete) back to concept phase
     try {
       const dirs = readdirSync(BUILDS_DIR)
-        .filter(name => name !== '.staging')
+        .filter(name => name !== '.staging' && name !== '.manual')
         .map(name => join(BUILDS_DIR, name))
         .filter(p => {
           try { return statSync(p).isDirectory() && statSync(join(p, 'pipeline-events.json')).isFile(); }

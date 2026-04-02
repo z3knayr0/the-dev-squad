@@ -1,6 +1,6 @@
 # Architecture
 
-5 agents. Each has one job. They pass work back and forth until it's perfect.
+5 agents. Two modes. In **Pipeline Mode**, agents pass work back and forth autonomously until it's perfect. In **Manual Mode**, you are the orchestrator — 5 Claude sessions with expertise labels, no automation, you direct everything.
 
 ## The Agents
 
@@ -192,4 +192,36 @@ User hits RESET
 
      After Phase 0, pipeline runs fully autonomous
      All sessions: claude --permission-mode auto --model claude-opus-4-6
+```
+
+## Manual Mode
+
+In manual mode, the orchestrator does not exist. The user is the orchestrator.
+
+- **No pipeline, no phases, no automation.** 5 Claude sessions with one-line expertise labels.
+- **State lives in `~/Builds/.manual/manual-state.json`** — separate from pipeline state.
+- **No role files.** Agents get a one-line system prompt on first message:
+  - A: "You specialize in software planning and architecture."
+  - B: "You specialize in code review and finding gaps."
+  - C: "You specialize in writing code."
+  - D: "You specialize in testing and debugging."
+  - S: "You help oversee and diagnose issues."
+- **No `PIPELINE_AGENT` env var** — hooks don't apply pipeline restrictions.
+- **Model picker** — user chooses Opus or Sonnet per session.
+- **Handoff button** — grabs an agent's last text response and stages it as context for the next agent messaged. Max 2000 chars.
+- **Per-agent sending** — multiple agents can be active simultaneously.
+- **Session resume** — sessions persist in `manual-state.json` and resume via `--resume`.
+
+```
+Manual Mode Data Flow
+
+User types in any panel
+  -> POST /api/chat { mode: 'manual', model, agent, message }
+  -> spawns claude with --system-prompt (first msg) or --resume (subsequent)
+  -> cwd: ~/Builds/.manual/
+  -> streams events into manual-state.json
+  -> GET /api/state?mode=manual polls manual-state.json -> viewer renders
+
+User hits RESET
+  -> POST /api/reset { mode: 'manual' } -> deletes ~/Builds/.manual/
 ```
