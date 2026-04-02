@@ -251,6 +251,12 @@ the-dev-squad/
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
+## Contributors
+
+- John Knopf / CrashOverride LLC — creator and maintainer
+- Claude Code — core implementation and pipeline iteration partner
+- OpenAI Codex — contributor for security review, hardening guidance, and documentation updates
+
 ## License
 
 MIT - see [LICENSE](LICENSE) for details.
@@ -260,5 +266,5 @@ Copyright (c) 2026 CrashOverride LLC
 ---
 
 <p align="center">
-  <strong>Built with Claude Code. Runs on Claude Code. No API required.</strong>
+  <strong>Built with Claude Code and OpenAI Codex. Runs on Claude Code. No API required.</strong>
 </p>
