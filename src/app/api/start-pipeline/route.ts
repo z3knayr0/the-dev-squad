@@ -1,9 +1,9 @@
 import { spawn } from 'child_process';
-import { readFileSync, writeFileSync, readdirSync, statSync, mkdirSync, copyFileSync, existsSync, rmSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync, rmSync } from 'fs';
 import { join, resolve } from 'path';
 import { homedir } from 'os';
 import { execFileSync } from 'child_process';
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
 const BUILDUI_DIR = resolve(process.cwd(), 'pipeline');
 const BUILDS_DIR = join(homedir(), 'Builds');
@@ -11,10 +11,16 @@ const STAGING_DIR = join(BUILDS_DIR, '.staging');
 
 let orchestratorProcess: ReturnType<typeof spawn> | null = null;
 
-export async function POST() {
+export async function POST(req: NextRequest) {
   if (orchestratorProcess) {
     return NextResponse.json({ success: false, error: 'Pipeline already running' });
   }
+
+  let securityMode = 'fast';
+  try {
+    const body = await req.json();
+    if (body?.securityMode === 'strict') securityMode = 'strict';
+  } catch {}
 
   // Read staging state — this is where Phase 0 chat lives
   const stagingEvents = join(STAGING_DIR, 'pipeline-events.json');
@@ -67,6 +73,7 @@ export async function POST() {
 
   // Move staging state to real project, update projectDir
   stagingState.projectDir = projectDir;
+  stagingState.securityMode = securityMode;
   writeFileSync(join(projectDir, 'pipeline-events.json'), JSON.stringify(stagingState, null, 2));
 
   // Clear staging
@@ -78,11 +85,12 @@ export async function POST() {
     cwd: projectDir,
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: true,
+    env: { ...process.env, PIPELINE_SECURITY_MODE: securityMode },
   });
 
   orchestratorProcess.stdout?.on('data', (data) => process.stdout.write(data));
   orchestratorProcess.stderr?.on('data', (data) => process.stderr.write(data));
   orchestratorProcess.on('close', () => { orchestratorProcess = null; });
 
-  return NextResponse.json({ success: true, projectDir });
+  return NextResponse.json({ success: true, projectDir, securityMode });
 }

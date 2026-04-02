@@ -58,7 +58,7 @@
 
 LLMs ignore prompt instructions. An agent told "only write plan.md" will write code files. An agent told "don't modify anything" will edit the plan.
 
-Restrictions are enforced by a `PreToolUse` hook (`pipeline/.claude/hooks/approval-gate.sh`) that prevents agents from accidentally exceeding their role. The hook is a guardrail, not a sandbox — see [SECURITY.md](../SECURITY.md) for the threat model, known limitations, and a matrix of what is fixable in-hook vs what requires design changes or OS-level isolation. The hook reads the `PIPELINE_AGENT` environment variable and gates every tool call:
+Restrictions are enforced by a `PreToolUse` hook (`pipeline/.claude/hooks/approval-gate.sh`) that prevents agents from accidentally exceeding their role. The hook is a guardrail, not a sandbox — see [SECURITY.md](SECURITY.md) for the threat model, known limitations, and a matrix of what is fixable in-hook vs what requires design changes or OS-level isolation. The hook reads the `PIPELINE_AGENT` environment variable and gates every tool call:
 
 | Agent | Write | Bash | Agent Tool |
 |-------|-------|------|------------|
@@ -73,10 +73,15 @@ Additional protections:
 - Pipeline sessions set `CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR=1`, so Bash `cd` does not persist into later file-edit tool calls
 - Plan is locked after B approves
 - Agent tool blocked for all agents (prevents recursive spawning)
+- Strict mode requires approval for every Bash call from C and D
 - `--permission-mode auto` adds Claude's AI safety classifier on top
 
 Roadmap:
-- **Strict mode** — require human approval for every Bash call from agents C and D for users who prefer stronger guardrails over full autonomy
+- **Fast mode** is the current autonomous default
+- **Strict mode** is available for pipeline runs
+- **Isolated mode** will run agents inside per-project sandboxes
+- **Request-scoped approvals** are still future work; the current approval UI assumes one active pipeline at a time
+- The concrete implementation plan lives in [SECURITY-ROADMAP.md](SECURITY-ROADMAP.md)
 
 ## Agent Communication
 
@@ -115,6 +120,7 @@ claude -p "<prompt>" \
 - `--output-format stream-json` — real-time streaming for the viewer
 - `PIPELINE_AGENT` env var — tells the hook which agent is running
 - Role files provide context (what the agent's job is), hooks provide law (what the agent can do)
+- Future hardening replaces direct host spawning with a sandbox runner; see [SECURITY-ROADMAP.md](SECURITY-ROADMAP.md)
 
 ## The Orchestrator
 
@@ -194,7 +200,7 @@ User hits RESET
 
      S sits above — available when things go sideways
 
-     After Phase 0, pipeline runs fully autonomous
+     After Phase 0, pipeline runs autonomous by default
      All sessions: claude --permission-mode auto --model claude-opus-4-6
 ```
 

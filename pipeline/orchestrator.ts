@@ -52,6 +52,7 @@ const AGENT_EFFORT: Record<string, string> = {
 let concept = '';
 let projectDir = '';
 let existingASession = '';
+let securityMode = process.env.PIPELINE_SECURITY_MODE === 'strict' ? 'strict' : 'fast';
 
 const args = process.argv.slice(2);
 const projectDirIdx = args.indexOf('--project-dir');
@@ -65,6 +66,7 @@ if (projectDirIdx !== -1 && aSessionIdx !== -1) {
   try {
     const existing = JSON.parse(readFileSync(join(projectDir, 'pipeline-events.json'), 'utf8'));
     concept = existing.concept || 'Build from viewer';
+    if (existing.securityMode === 'strict') securityMode = 'strict';
   } catch {
     concept = 'Build from viewer';
   }
@@ -142,6 +144,7 @@ interface PipelineState {
   concept: string;
   projectDir: string;
   currentPhase: string;
+  securityMode: 'fast' | 'strict';
   activeAgent: string;
   agentStatus: Record<string, string>;
   sessions: Record<string, string>;
@@ -160,6 +163,7 @@ if (existingASession && existsSync(eventsFile)) {
     concept: existing.concept || concept,
     projectDir: existing.projectDir || projectDir,
     currentPhase: existing.currentPhase || 'concept',
+    securityMode: existing.securityMode === 'strict' ? 'strict' : securityMode,
     activeAgent: existing.activeAgent || '',
     agentStatus: existing.agentStatus || { A: 'idle', B: 'idle', C: 'idle', D: 'idle' },
     sessions: existing.sessions || {},
@@ -172,6 +176,7 @@ if (existingASession && existsSync(eventsFile)) {
     concept,
     projectDir,
     currentPhase: 'concept',
+    securityMode,
     activeAgent: '',
     agentStatus: { A: 'idle', B: 'idle', C: 'idle', D: 'idle' },
     sessions: {},
@@ -271,6 +276,7 @@ function claude(
       env: {
         ...process.env,
         PIPELINE_AGENT: agent,
+        PIPELINE_SECURITY_MODE: state.securityMode,
         // Reset Claude's working directory after each Bash command so a `cd`
         // does not persist into later Write/Edit tool calls.
         CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: '1',
@@ -441,7 +447,7 @@ function parseSignal(result: string): Record<string, unknown> {
     if (match) {
       try {
         let depth = 0;
-        let start = result.indexOf(match[0]);
+        const start = result.indexOf(match[0]);
         for (let i = start; i < result.length; i++) {
           if (result[i] === '{') depth++;
           if (result[i] === '}') depth--;

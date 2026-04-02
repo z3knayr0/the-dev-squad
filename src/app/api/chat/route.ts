@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync } from 'fs';
 import { join, resolve, basename } from 'path';
 import { homedir } from 'os';
 import { createInterface } from 'readline';
@@ -36,6 +36,7 @@ function getManualState(): Record<string, unknown> {
     concept: '',
     projectDir: MANUAL_DIR,
     currentPhase: 'concept',
+    securityMode: 'fast',
     activeAgent: '',
     agentStatus: { A: 'idle', B: 'idle', C: 'idle', D: 'idle', S: 'idle' },
     sessions: {},
@@ -57,6 +58,7 @@ function getStagingState(): Record<string, unknown> {
     concept: '',
     projectDir: '',
     currentPhase: 'concept',
+    securityMode: 'fast',
     activeAgent: '',
     agentStatus: { A: 'idle', B: 'idle', C: 'idle', D: 'idle', S: 'idle' },
     sessions: {},
@@ -70,7 +72,6 @@ function getStagingState(): Record<string, unknown> {
 
 function findLatestProject(): string | null {
   try {
-    const { readdirSync, statSync } = require('fs');
     const dirs = readdirSync(BUILDS_DIR)
       .filter((name: string) => name !== '.staging' && name !== '.manual')
       .map((name: string) => join(BUILDS_DIR, name))
@@ -255,6 +256,7 @@ function handlePipeline(agent: string, message: string) {
 
   let state: Record<string, unknown> = {};
   try { state = JSON.parse(readFileSync(eventsFile, 'utf8')); } catch {}
+  const securityMode = state.securityMode === 'strict' ? 'strict' : 'fast';
   const sessions = (state.sessions as Record<string, string>) || {};
   const sessionId = sessions[agent] || '';
 
@@ -289,7 +291,14 @@ function handlePipeline(agent: string, message: string) {
   ];
   if (sessionId) args.push('--resume', sessionId);
 
-  return streamClaude(args, projectDir, { ...process.env, PIPELINE_AGENT: agent }, eventsFile, agent, sessionId);
+  return streamClaude(
+    args,
+    projectDir,
+    { ...process.env, PIPELINE_AGENT: agent, PIPELINE_SECURITY_MODE: securityMode },
+    eventsFile,
+    agent,
+    sessionId
+  );
 }
 
 // ── Route handler ───────────────────────────────────────────────────

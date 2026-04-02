@@ -1,12 +1,14 @@
 # Pipeline Build Architecture
 
-Four agents. Each has one job. They pass work back and forth until it's perfect.
+Five agents. Each has one job. They pass work back and forth until it's perfect.
+
+This file is the conceptual pipeline sketch. For the current implementation and security model, use [ARCHITECTURE.md](../ARCHITECTURE.md), [SECURITY.md](../SECURITY.md), and [SECURITY-ROADMAP.md](../SECURITY-ROADMAP.md).
 
 ---
 
 ## The Agents
 
-- **S — Supervisor**: Oversees the entire pipeline. Talks to the user. Monitors all agents. Intervenes when things go wrong. No restrictions.
+- **S — Supervisor**: Diagnostic assistant available on demand. Reads broadly, helps when things go wrong, and is not part of the normal autonomous loop.
 - **A — Planner**: Builds the plan, answers questions, owns the lifecycle from start to finish
 - **B — Plan Reviewer**: Pokes holes in the plan until there are none left
 - **C — Coder**: Follows the approved plan and writes the code
@@ -20,7 +22,7 @@ Four agents. Each has one job. They pass work back and forth until it's perfect.
 
 1. The **user** gives the build concept to **A**. This is the only required human interaction.
 2. **A** can ask the user clarifying questions — what do you want, how should it work, any constraints? The user answers. This is the last time the user needs to be involved.
-3. From this point forward, the pipeline runs autonomously. The user can watch the dashboard but does not need to approve, gate, or control anything. The pipeline is the safety mechanism.
+3. From this point forward, the pipeline runs autonomously by default. The user usually watches the dashboard rather than steering the flow, but approvals can still appear for Bash commands and future strict mode intentionally adds more human gating.
 
 ### Phase 1: Planning
 
@@ -85,20 +87,21 @@ Each agent runs as a separate Claude Code session. Sessions are spawned with:
 claude --permission-mode auto --model claude-opus-4-6
 ```
 
-- `--auto-mode` uses Anthropic's AI classifier to auto-approve safe operations and block dangerous ones. No manual Y/N prompts.
+- `--permission-mode auto` uses Claude's classifier for general safety, but pipeline builds can still surface approval prompts for Bash depending on command risk and future strict-mode settings.
 - Our PreToolUse hook stacks on top — enforces per-agent restrictions (A can only write plan.md, D can't write, etc.).
 - `--model claude-opus-4-6` sets Opus 4.6.
 - Each session gets a CLAUDE.md or system prompt defining its role, what it can do, and who it talks to.
+- Stronger containment is a roadmap item, not a current guarantee. See [SECURITY-ROADMAP.md](../SECURITY-ROADMAP.md).
 
 ## Human Interaction
 
-The user is only involved at the start:
+The user is mainly involved at the start:
 1. User gives the build concept to A.
 2. A can ask clarifying questions. User answers.
-3. Pipeline runs autonomously from that point. No gates, no approvals, no Y/N.
+3. Pipeline runs autonomously from that point in the default mode, but the UI can still surface approvals for some Bash operations and future strict mode adds approval for all C/D Bash.
 4. User gets notified when the build is complete.
 
-The dashboard is a monitoring window — the user can watch progress but does not need to interact.
+The dashboard is mostly a monitoring window, but it can also become an approval surface when the policy requires it.
 
 ---
 
@@ -237,6 +240,6 @@ COMMUNICATION MAP — who talks to who
            │
            └──→ back to A when done
 
-    after Phase 0, pipeline runs fully autonomous
+    after Phase 0, pipeline runs autonomous by default
     all sessions: claude --permission-mode auto --model claude-opus-4-6
 ```

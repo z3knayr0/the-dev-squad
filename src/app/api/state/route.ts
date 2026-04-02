@@ -8,7 +8,7 @@ const STAGING_DIR = join(BUILDS_DIR, '.staging');
 const MANUAL_DIR = join(BUILDS_DIR, '.manual');
 
 const EMPTY_STATE = {
-  concept: '', projectDir: '', currentPhase: 'concept', activeAgent: '',
+  concept: '', projectDir: '', currentPhase: 'concept', securityMode: 'fast', activeAgent: '',
   agentStatus: { A: 'idle', B: 'idle', C: 'idle', D: 'idle', S: 'idle' },
   sessions: {}, buildComplete: false,
   usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalCostUsd: 0 },

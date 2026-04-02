@@ -6,9 +6,13 @@ The hook system prevents agents from **accidentally drifting out of their lane**
 
 If your threat model requires defense against a hostile agent, you need OS-level isolation (containers, chroot, seccomp) — not a bash hook.
 
+The concrete implementation plan for getting there lives in [SECURITY-ROADMAP.md](SECURITY-ROADMAP.md).
+
 ## Hook Enforcement Model
 
 Agent permissions are enforced by a `PreToolUse` hook (`pipeline/.claude/hooks/approval-gate.sh`), not by prompts. The hook runs before every tool call for every agent. Prompts provide context — the hook provides guardrails.
+
+Run `pnpm test:hook` after changing the orchestrator or hook rules. It verifies the expected agent/tool contract so hook drift is caught before it reaches a live pipeline run.
 
 ## What the Hook Catches
 
@@ -86,12 +90,11 @@ Pipeline sessions also set `CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR=1`, which r
 
 ## Recommended Hardening (Future)
 
-For stronger isolation:
-1. **Strict mode for C/D** — require human approval for every Bash call from the coder and tester, not just obviously dangerous ones
-2. **Per-project write jail** — keep file-edit tools restricted to the active project directory, not all of `~/Builds/`
-3. **Docker containers or equivalent OS sandbox** — run each agent session in an isolated environment with only the intended project directory writable
-4. **Move `.claude/` outside `~/Builds/`** — put hooks and settings in a location agents can never reach
-5. **Allowlist over blocklist** — instead of blocking bad bash patterns, only allow specific safe commands
+The build plan is in [SECURITY-ROADMAP.md](SECURITY-ROADMAP.md). In short:
+
+1. **`v0.3`: Strict mode** — first cut shipped; C/D Bash now supports "approve every call," but the approval flow still assumes a single active pipeline run
+2. **`v0.4`: Sandboxed execution** — run agents in containers or equivalent per-project sandboxes
+3. **`v0.5`: Host-owned policy** — move approvals and enforcement outside the repo so agents cannot disable them by editing project files
 
 ## Reporting
 

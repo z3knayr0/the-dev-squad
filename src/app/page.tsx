@@ -1,10 +1,9 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Card } from '@/components/shared/Card';
 import { Badge } from '@/components/shared/Badge';
 import { LunarOfficeScene } from '@/components/mission/LunarOfficeScene';
-import { usePipelineState, type AgentId, type AppMode } from '@/lib/use-pipeline';
+import { usePipelineState, type AgentId, type AppMode, type SecurityMode } from '@/lib/use-pipeline';
 
 const AGENT_NAMES: Record<AgentId, string> = {
   A: 'Planner', B: 'Reviewer', C: 'Coder', D: 'Tester', S: 'Supervisor',
@@ -44,6 +43,7 @@ const MANUAL_ROLES: Record<string, string> = {
 export default function PipelinePage() {
   const [mode, setMode] = useState<AppMode>('pipeline');
   const [selectedModel, setSelectedModel] = useState('claude-sonnet-4-6');
+  const [selectedSecurityMode, setSelectedSecurityMode] = useState<SecurityMode>('fast');
 
   const {
     state, sendChat, startPipeline, stopPipeline, approveBash, getPlan, resetState, agentEvents, agentSpeech,
@@ -53,7 +53,6 @@ export default function PipelinePage() {
   const [chatInput, setChatInput] = useState('');
   const [sendingAgents, setSendingAgents] = useState<Set<AgentId>>(new Set());
   const [pipelineStarted, setPipelineStarted] = useState(false);
-  const [pipelineRunning, setPipelineRunning] = useState(false);
   const [showPlan, setShowPlan] = useState(false);
   const [planContent, setPlanContent] = useState<string | null>(null);
   const [pendingApproval, setPendingApproval] = useState<Record<string, unknown> | null>(null);
@@ -65,8 +64,10 @@ export default function PipelinePage() {
   const feedRef = useRef<HTMLDivElement>(null);
   const prevCounts = useRef<Record<string, number>>({ A: 0, B: 0, C: 0, D: 0, S: 0 });
   const prevFeedCount = useRef(0);
+  const completionNotifiedRef = useRef(false);
 
   const isPipeline = mode === 'pipeline';
+  const pipelineRunning = (pipelineStarted || (!!state.projectDir && state.currentPhase !== 'concept')) && !state.buildComplete;
 
   // Auto-scroll: all panels, expanded modal, and live feed
   useEffect(() => {
@@ -96,8 +97,8 @@ export default function PipelinePage() {
   // Detect pipeline completion (pipeline mode only)
   useEffect(() => {
     if (!isPipeline) return;
-    if (state.buildComplete && pipelineRunning) {
-      setPipelineRunning(false);
+    if (state.buildComplete && !completionNotifiedRef.current && (pipelineStarted || !!state.projectDir)) {
+      completionNotifiedRef.current = true;
       try {
         const ctx = new AudioContext();
         [523.25, 659.25].forEach((freq, i) => {
@@ -117,7 +118,7 @@ export default function PipelinePage() {
         new Notification('The Dev Squad', { body: 'Build complete!' });
       }
     }
-  }, [state.buildComplete, pipelineRunning, isPipeline]);
+  }, [state.buildComplete, isPipeline, pipelineStarted, state.projectDir]);
 
   // Poll for pending approvals (pipeline mode only)
   useEffect(() => {
@@ -141,11 +142,11 @@ export default function PipelinePage() {
   }
 
   async function handleStartPipeline() {
+    completionNotifiedRef.current = false;
     setPipelineStarted(true);
-    setPipelineRunning(true);
-    const res = await startPipeline();
+    const res = await startPipeline(selectedSecurityMode);
     if (!res?.success) {
-      setPipelineRunning(false);
+      setPipelineStarted(false);
       console.error('Pipeline failed to start:', res?.error || 'Unknown error');
     }
   }
@@ -162,7 +163,7 @@ export default function PipelinePage() {
     }
     await resetState();
     setPipelineStarted(false);
-    setPipelineRunning(false);
+    completionNotifiedRef.current = false;
     setSelectedAgent('S');
     setExpandedAgent(null);
     setChatInput('');
@@ -170,7 +171,7 @@ export default function PipelinePage() {
   }
 
   async function handlePanelSend(id: AgentId) {
-    let msg = panelInputs[id]?.trim();
+    const msg = panelInputs[id]?.trim();
     if (sendingAgents.has(id) || !msg) return;
 
     setSendingAgents(prev => new Set([...prev, id]));
@@ -182,7 +183,7 @@ export default function PipelinePage() {
 
   async function handleExpandedSend() {
     if (!expandedAgent || sendingAgents.has(expandedAgent) || !chatInput.trim()) return;
-    let msg = chatInput.trim();
+    const msg = chatInput.trim();
 
     setSendingAgents(prev => new Set([...prev, expandedAgent]));
     await sendChat(expandedAgent, msg);
@@ -203,6 +204,8 @@ export default function PipelinePage() {
 
   const phase = state.currentPhase;
   const progress = PHASE_PROGRESS[phase] || 0;
+  const securityModeLocked = isPipeline && (pipelineStarted || pipelineRunning || !!state.projectDir);
+  const activeSecurityMode = state.projectDir ? (state.securityMode || 'fast') : selectedSecurityMode;
 
   // Derived stats
   const firstEventTime = state.events.length > 0 ? new Date(state.events[0].time).getTime() : 0;
@@ -320,6 +323,32 @@ export default function PipelinePage() {
                 </select>
               )}
             </div>
+            {isPipeline && (
+              <div className="mt-3">
+                <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">Security Mode</div>
+                <div className="flex items-center gap-2">
+                  <div className="flex rounded-lg border border-white/10 bg-white/5">
+                    <button
+                      onClick={() => setSelectedSecurityMode('fast')}
+                      disabled={securityModeLocked}
+                      className={`px-3 py-1 text-[10px] font-bold uppercase tracking-wider transition-all disabled:cursor-not-allowed disabled:opacity-50 ${selectedSecurityMode === 'fast' ? 'bg-emerald-600 text-white' : 'text-[#555] hover:text-[#888]'}`}
+                      style={{ borderRadius: '7px 0 0 7px' }}
+                    >Fast</button>
+                    <button
+                      onClick={() => setSelectedSecurityMode('strict')}
+                      disabled={securityModeLocked}
+                      className={`px-3 py-1 text-[10px] font-bold uppercase tracking-wider transition-all disabled:cursor-not-allowed disabled:opacity-50 ${selectedSecurityMode === 'strict' ? 'bg-amber-600 text-white' : 'text-[#555] hover:text-[#888]'}`}
+                      style={{ borderRadius: '0 7px 7px 0' }}
+                    >Strict</button>
+                  </div>
+                  <span className="text-[10px] text-slate-500">
+                    {selectedSecurityMode === 'strict'
+                      ? 'Every C/D Bash call needs approval'
+                      : 'Safe Bash auto-runs, risky Bash asks'}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Pipeline-only: Phase + Progress */}
@@ -332,6 +361,9 @@ export default function PipelinePage() {
                 {state.activeAgent && (
                   <Badge variant="purple">Agent {state.activeAgent}</Badge>
                 )}
+                <Badge variant={activeSecurityMode === 'strict' ? 'warning' : 'success'}>
+                  {activeSecurityMode === 'strict' ? 'STRICT' : 'FAST'}
+                </Badge>
                 {state.buildComplete && <Badge variant="success">COMPLETE</Badge>}
               </div>
               <div>
@@ -423,7 +455,7 @@ export default function PipelinePage() {
                 START
               </button>
             )}
-            <button onClick={() => { setPipelineRunning(false); stopPipeline(); setSendingAgents(new Set()); }} className="rounded-lg bg-red-500 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-400">
+            <button onClick={() => { setPipelineStarted(false); completionNotifiedRef.current = false; stopPipeline(); setSendingAgents(new Set()); }} className="rounded-lg bg-red-500 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-400">
               STOP
             </button>
             {isPipeline && state.events.some(e => e.text?.includes('plan.md')) && (
@@ -686,7 +718,7 @@ export default function PipelinePage() {
       {isPipeline && pendingApproval && (
         <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-xl border-2 border-amber-500 bg-[#1a1a2a] px-6 py-4 shadow-[0_0_30px_rgba(245,158,11,0.2)]">
           <p className="text-xs font-bold uppercase tracking-wider text-amber-400">
-            {pendingApproval.tool as string} — Approval Required
+            {activeSecurityMode === 'strict' ? 'Strict Mode' : (pendingApproval.tool as string)} — Approval Required
           </p>
           <p className="mt-2 max-w-md break-all font-mono text-sm text-amber-200">
             {(pendingApproval.description as string) || JSON.stringify(pendingApproval.input)}

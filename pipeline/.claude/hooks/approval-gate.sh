@@ -17,6 +17,7 @@
 # AGENT D (Tester):     Cannot write anything. No Agent tool.
 #
 # ALL: Write/Edit outside ~/Builds/ blocked. .claude/ paths blocked for all agents.
+# MODES: fast=default autonomy, strict=require approval for all C/D Bash calls.
 # DEFAULT: DENY (any unrecognized tool is blocked, not allowed)
 #
 
@@ -28,6 +29,7 @@ CWD=$(echo "$INPUT" | jq -r '.cwd')
 # Canonicalize BUILDS_DIR to handle symlinks in $HOME
 BUILDS_DIR=$(readlink -f "$HOME/Builds" 2>/dev/null || echo "$HOME/Builds")
 AGENT="${PIPELINE_AGENT:-unknown}"
+SECURITY_MODE="${PIPELINE_SECURITY_MODE:-fast}"
 
 # ── Reject empty/malformed tool name ─────────────────────────────────
 
@@ -46,7 +48,7 @@ fi
 # ── Auto-approve read-only tools (all agents) ────────────────────────
 
 case "$TOOL_NAME" in
-  Read|Glob|Grep|ToolSearch|TaskCreate|TaskUpdate|TaskGet|TaskList|TaskOutput|LSP)
+  Read|Glob|Grep|ToolSearch|TaskCreate|TaskUpdate|TaskGet|TaskList|TaskOutput|LSP|StructuredOutput)
     echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}'
     exit 0
     ;;
@@ -248,7 +250,19 @@ if [ "$TOOL_NAME" = "Bash" ]; then
       ;;
   esac
 
-  # C, D, S: auto mode handles remaining bash safety
+  # In strict mode, all Bash from C/D requires explicit user approval.
+  if [ "$SECURITY_MODE" = "strict" ] && { [ "$AGENT" = "C" ] || [ "$AGENT" = "D" ]; }; then
+    jq -n --arg reason "Strict mode: Agent $AGENT Bash requires approval" '{
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "ask",
+        permissionDecisionReason: $reason
+      }
+    }'
+    exit 0
+  fi
+
+  # C, D, S: auto mode handles remaining bash safety in fast mode
   echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}'
   exit 0
 fi

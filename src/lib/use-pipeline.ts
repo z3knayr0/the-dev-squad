@@ -5,6 +5,7 @@ import { useEffect, useState, useCallback } from 'react';
 export type AgentId = 'A' | 'B' | 'C' | 'D' | 'S';
 export type Phase = 'concept' | 'planning' | 'plan-review' | 'coding' | 'code-review' | 'testing' | 'deploy' | 'complete';
 export type AppMode = 'pipeline' | 'manual';
+export type SecurityMode = 'fast' | 'strict';
 
 export interface PipelineEvent {
   time: string;
@@ -27,6 +28,7 @@ export interface PipelineState {
   concept: string;
   projectDir: string;
   currentPhase: Phase;
+  securityMode: SecurityMode;
   activeAgent: string;
   agentStatus: Record<AgentId, string>;
   sessions: Record<string, string>;
@@ -39,6 +41,7 @@ const EMPTY_STATE: PipelineState = {
   concept: '',
   projectDir: '',
   currentPhase: 'concept',
+  securityMode: 'fast',
   activeAgent: '',
   agentStatus: { A: 'idle', B: 'idle', C: 'idle', D: 'idle', S: 'idle' },
   sessions: {},
@@ -88,8 +91,12 @@ export function usePipelineState({ pollInterval = 400, mode, model }: UsePipelin
     return res.json();
   }, [mode, model]);
 
-  const startPipeline = useCallback(async () => {
-    const res = await fetch('/api/start-pipeline', { method: 'POST' });
+  const startPipeline = useCallback(async (securityMode: SecurityMode) => {
+    const res = await fetch('/api/start-pipeline', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ securityMode }),
+    });
     return res.json();
   }, []);
 
