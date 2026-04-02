@@ -1,14 +1,19 @@
 #!/bin/bash
 #
-# Pipeline Approval Gate (Hardened)
+# Pipeline Approval Gate (Hardened v2)
 #
 # Per-agent permission enforcement. Auto mode handles general safety.
 # This hook handles pipeline-specific rules with DENY-BY-DEFAULT.
 #
+# LIMITATIONS: This hook prevents agents from accidentally exceeding their role.
+# It is NOT a security sandbox. A sufficiently adversarial agent could bypass
+# bash-level grep filters via indirect execution. For true isolation, use
+# OS-level sandboxing (containers, chroot, etc).
+#
 # AGENT S (Supervisor): Read unrestricted. Write/Edit jailed to ~/Builds/. Bash allowed.
-# AGENT A (Planner):    Can only write plan.md. No Bash. No Agent tool. No writes during Phase 0.
+# AGENT A (Planner):    Can only write plan.md in current project. No Bash. No Agent tool.
 # AGENT B (Reviewer):   Cannot write anything. No Bash. No Agent tool.
-# AGENT C (Coder):      Can write anything inside ~/Builds/ except plan.md and .claude/. No Agent tool.
+# AGENT C (Coder):      Can write in current project except plan.md and .claude/. No Agent tool.
 # AGENT D (Tester):     Cannot write anything. No Agent tool.
 #
 # ALL: Write/Edit outside ~/Builds/ blocked. .claude/ paths blocked for all agents.
@@ -20,17 +25,18 @@ TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name')
 TOOL_INPUT=$(echo "$INPUT" | jq -c '.tool_input')
 CWD=$(echo "$INPUT" | jq -r '.cwd')
 
-BUILDS_DIR="$HOME/Builds"
+# Canonicalize BUILDS_DIR to handle symlinks in $HOME
+BUILDS_DIR=$(readlink -f "$HOME/Builds" 2>/dev/null || echo "$HOME/Builds")
 AGENT="${PIPELINE_AGENT:-unknown}"
 
-# ── V9 fix: Reject empty/malformed tool name ────────────────────────
+# ── Reject empty/malformed tool name ─────────────────────────────────
 
 if [ -z "$TOOL_NAME" ] || [ "$TOOL_NAME" = "null" ]; then
   echo "BLOCKED: Could not parse tool name" >&2
   exit 2
 fi
 
-# ── V7 fix: Reject unknown agent identity ────────────────────────────
+# ── Reject unknown agent identity ────────────────────────────────────
 
 if [[ ! "$AGENT" =~ ^[ABCDS]$ ]]; then
   echo "BLOCKED: Unknown agent identity '$AGENT'" >&2
@@ -40,7 +46,7 @@ fi
 # ── Auto-approve read-only tools (all agents) ────────────────────────
 
 case "$TOOL_NAME" in
-  Read|Glob|Grep|ToolSearch|TaskCreate|TaskUpdate|TaskGet|TaskList|TaskOutput|WebSearch|LSP)
+  Read|Glob|Grep|ToolSearch|TaskCreate|TaskUpdate|TaskGet|TaskList|TaskOutput|LSP)
     echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}'
     exit 0
     ;;
@@ -53,10 +59,15 @@ if [ "$TOOL_NAME" = "Agent" ]; then
   exit 2
 fi
 
-# ── V8 fix: Block WebFetch (data exfiltration risk) ──────────────────
+# ── Block WebFetch and WebSearch (exfiltration risk) ─────────────────
 
-if [ "$TOOL_NAME" = "WebFetch" ]; then
-  echo "BLOCKED: Agent $AGENT cannot use WebFetch" >&2
+if [ "$TOOL_NAME" = "WebFetch" ] || [ "$TOOL_NAME" = "WebSearch" ]; then
+  # Only allow WebSearch for agents that need research (A for planning)
+  if [ "$TOOL_NAME" = "WebSearch" ] && [ "$AGENT" = "A" ]; then
+    echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}'
+    exit 0
+  fi
+  echo "BLOCKED: Agent $AGENT cannot use $TOOL_NAME" >&2
   exit 2
 fi
 
@@ -68,15 +79,21 @@ resolve_filepath() {
   if [[ "$fp" != /* ]]; then
     fp="$CWD/$fp"
   fi
-  # V10 fix: Reject .. in paths
+  # Reject .. in paths
   if [[ "$fp" == *".."* ]]; then
     echo "BLOCKED"
     return
   fi
   # Resolve directory symlinks
-  fp=$(cd "$(dirname "$fp")" 2>/dev/null && echo "$(pwd -P)/$(basename "$fp")" || echo "BLOCKED")
-  # V4 fix: Resolve file-level symlinks
-  if command -v readlink >/dev/null 2>&1; then
+  local dir_resolved
+  dir_resolved=$(cd "$(dirname "$fp")" 2>/dev/null && pwd -P)
+  if [ -z "$dir_resolved" ]; then
+    echo "BLOCKED"
+    return
+  fi
+  fp="$dir_resolved/$(basename "$fp")"
+  # Resolve file-level symlinks AND hardlinks by checking real path
+  if [ -e "$fp" ]; then
     local resolved
     resolved=$(readlink -f "$fp" 2>/dev/null)
     if [ -n "$resolved" ]; then
@@ -87,7 +104,6 @@ resolve_filepath() {
 }
 
 # ── Per-agent Write/Edit/NotebookEdit rules ──────────────────────────
-# V5 fix: NotebookEdit is now gated like Write/Edit
 
 case "$TOOL_NAME" in
   Write|Edit|NotebookEdit)
@@ -101,19 +117,21 @@ case "$TOOL_NAME" in
 
     FILENAME=$(basename "$FILEPATH")
 
-    # V6 fix: Trailing slash in prefix check
+    # Must be inside ~/Builds/ (with trailing slash)
     if [[ "$FILEPATH" != "$BUILDS_DIR/"* ]]; then
       echo "BLOCKED: Cannot write to $FILEPATH — outside ~/Builds/" >&2
       exit 2
     fi
 
-    # V1/V2 fix: Block writes to .claude/ for ALL agents (including S)
-    if [[ "$FILEPATH" == *"/.claude/"* ]] || [[ "$FILEPATH" == *"/.claude" ]]; then
-      echo "BLOCKED: Cannot modify hook/settings files" >&2
-      exit 2
-    fi
+    # Block writes to .claude/ for ALL agents (including S)
+    case "$FILEPATH" in
+      */.claude/*|*/.claude)
+        echo "BLOCKED: Cannot modify hook/settings files" >&2
+        exit 2
+        ;;
+    esac
 
-    # Phase 0 check for A
+    # Phase 0 check for A — default to BLOCKED if events file missing
     if [ "$AGENT" = "A" ]; then
       EVENTS_FILE=""
       CHECK="$CWD"
@@ -124,19 +142,20 @@ case "$TOOL_NAME" in
         fi
         CHECK=$(dirname "$CHECK")
       done
+      CURRENT_PHASE="concept"
       if [ -n "$EVENTS_FILE" ]; then
-        CURRENT_PHASE=$(jq -r '.currentPhase // "concept"' "$EVENTS_FILE" 2>/dev/null)
-        if [ "$CURRENT_PHASE" = "concept" ]; then
-          echo "BLOCKED: Agent A cannot write during Phase 0" >&2
-          exit 2
-        fi
+        CURRENT_PHASE=$(jq -r '.currentPhase // "concept"' "$EVENTS_FILE" 2>/dev/null || echo "concept")
+      fi
+      if [ "$CURRENT_PHASE" = "concept" ]; then
+        echo "BLOCKED: Agent A cannot write during Phase 0" >&2
+        exit 2
       fi
     fi
 
     # Agent-specific write rules
     case "$AGENT" in
       S)
-        # S can write inside ~/Builds/ (already verified above) but not .claude/
+        # S can write inside ~/Builds/ but not .claude/ (already checked above)
         ;;
       A)
         if [[ "$FILENAME" != "plan.md" ]]; then
@@ -179,27 +198,50 @@ if [ "$TOOL_NAME" = "Bash" ]; then
       ;;
   esac
 
-  # V3 fix: Block bash commands that try to spawn claude or change agent identity
   COMMAND=$(echo "$TOOL_INPUT" | jq -r '.command // ""')
-  if echo "$COMMAND" | grep -qiE 'PIPELINE_AGENT|claude\s+-p|claude\s+--'; then
-    echo "BLOCKED: Cannot spawn Claude sessions or modify agent identity via Bash" >&2
-    exit 2
-  fi
 
-  # V1 fix (Bash path): Block bash commands targeting .claude/ directory
-  if echo "$COMMAND" | grep -qE '\.claude/|\.claude\\b|settings\.json|approval-gate'; then
-    echo "BLOCKED: Cannot modify hook or settings files via Bash" >&2
-    exit 2
-  fi
+  # Block any command that references .claude in any form (glob, quotes, variables)
+  # Use case pattern matching which handles glob patterns
+  case "$COMMAND" in
+    *".claude"*|*"approval-gate"*|*"settings.json"*|*"hooks/"*)
+      echo "BLOCKED: Cannot modify hook or settings files via Bash" >&2
+      exit 2
+      ;;
+  esac
 
-  # C, D, S: auto mode handles bash safety
+  # Block commands that could spawn claude or change agent identity
+  # This catches direct invocations — indirect exec (python, eval, base64)
+  # is a known limitation documented in SECURITY.md
+  case "$COMMAND" in
+    *"PIPELINE_AGENT"*|*"claude -p"*|*"claude --"*|*"claude -"*)
+      echo "BLOCKED: Cannot spawn Claude sessions or modify agent identity via Bash" >&2
+      exit 2
+      ;;
+  esac
+
+  # Block ln (hardlink/symlink creation) to prevent link-based bypasses
+  case "$COMMAND" in
+    *" ln "*|"ln "*|*" ln -"*|*";ln "*|*"&&ln "*|*"|ln "*)
+      echo "BLOCKED: Cannot create links via Bash" >&2
+      exit 2
+      ;;
+  esac
+
+  # Block mv/cp targeting .claude or hook files (catches glob evasion)
+  case "$COMMAND" in
+    *"mv "*".clau"*|*"cp "*".clau"*|*"rm "*".clau"*)
+      echo "BLOCKED: Cannot move/copy/remove hook files via Bash" >&2
+      exit 2
+      ;;
+  esac
+
+  # C, D, S: auto mode handles remaining bash safety
   echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}'
   exit 0
 fi
 
 # ── DENY BY DEFAULT ──────────────────────────────────────────────────
 # Any tool not explicitly handled above is BLOCKED.
-# This catches NotebookEdit (if somehow missed), WebFetch, and any future tools.
 
 echo "BLOCKED: Tool '$TOOL_NAME' is not allowed for Agent $AGENT" >&2
 exit 2

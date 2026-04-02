@@ -78,11 +78,23 @@ The path resolution fallback preserved `..` components when the target directory
 
 | Agent | Read | Write | Bash | WebSearch | WebFetch | Agent Tool |
 |-------|------|-------|------|-----------|----------|------------|
-| S | Anywhere | `~/Builds/` only (no `.claude/`) | Yes (no `claude` spawn, no `.claude/` modification) | Yes | No | No |
-| A | Anywhere | `plan.md` only (no Phase 0) | No | Yes | No | No |
-| B | Anywhere | No | No | Yes | No | No |
-| C | Anywhere | `~/Builds/` (no `plan.md`, no `.claude/`) | Yes (restricted) | Yes | No | No |
-| D | Anywhere | No | Yes (restricted) | Yes | No | No |
+| S | Anywhere | `~/Builds/` only (no `.claude/`) | Yes (no `claude` spawn, no `.claude/` modification, no `ln`) | No | No | No |
+| A | Anywhere | `plan.md` only (no Phase 0) | No | Yes (A only) | No | No |
+| B | Anywhere | No | No | No | No | No |
+| C | Anywhere | `~/Builds/` (no `plan.md`, no `.claude/`) | Yes (restricted, no `ln`) | No | No | No |
+| D | Anywhere | No | Yes (restricted, no `ln`) | No | No | No |
+
+## Known Limitations
+
+This hook prevents agents from **accidentally** exceeding their role. It is NOT a security sandbox.
+
+**Indirect execution bypass:** An agent with Bash access (C, D, S) could theoretically use `python3 -c`, `eval`, or base64 encoding to indirectly invoke Claude or modify files in ways the grep filters don't catch. The hook blocks direct invocations but cannot prevent all forms of indirect execution.
+
+**TOCTOU race conditions:** The hook resolves file paths at check time. Between the check and the actual tool execution, symlinks could be retargeted. This is a fundamental limitation of check-then-act in a separate process.
+
+**Hardlink detection:** The hook resolves symlinks via `readlink -f` and blocks `ln` commands, but cannot detect pre-existing hardlinks created outside the hook's observation.
+
+For true isolation, use OS-level sandboxing (containers, chroot, seccomp). The hook is a guardrail, not a jail.
 
 ## Reporting
 
