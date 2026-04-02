@@ -9,6 +9,7 @@ import {
   createRunner,
   getNetworkProfile,
   getProjectMountMode,
+  isRecoverableDockerAuthFailure,
   shouldPreferDocker,
 } from '../pipeline/runner.ts';
 
@@ -67,9 +68,15 @@ assert.equal(getProjectMountMode('D'), 'rw');
 assert.equal(getNetworkProfile('A'), 'research');
 assert.equal(getNetworkProfile('C'), 'build');
 assert.equal(getNetworkProfile('S'), 'none');
+assert.equal(isRecoverableDockerAuthFailure('Not logged in · Please run /login'), true);
+assert.equal(isRecoverableDockerAuthFailure('Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error"}}'), true);
+assert.equal(isRecoverableDockerAuthFailure('Tool execution failed for a different reason'), false);
 
 assert.ok(createRunner('host') instanceof HostRunner);
 assert.ok(createRunner('auto') instanceof AutoRunner);
 assert.equal(typeof new DockerRunner().isAvailable(), 'boolean');
+assert.equal(new HostRunner().supportsHostFallback({ pipelineAgent: 'C' }), false);
+assert.equal(new AutoRunner().supportsHostFallback({ pipelineAgent: 'C' }), true);
+assert.equal(new AutoRunner().supportsHostFallback({ pipelineAgent: 'C', forceHost: true }), false);
 
 console.log('runner checks passed');

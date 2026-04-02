@@ -5,6 +5,7 @@ import { basename } from 'node:path';
 
 export type PipelineAgentId = 'A' | 'B' | 'C' | 'D' | 'S';
 export type RunnerMode = 'host' | 'docker' | 'auto';
+export type RunnerBackend = 'host' | 'docker';
 
 export interface RunnerOptions {
   prompt: string;
@@ -20,6 +21,7 @@ export interface RunnerOptions {
   securityMode?: 'fast' | 'strict';
   extraEnv?: NodeJS.ProcessEnv;
   templateFiles?: string[];
+  forceHost?: boolean;
 }
 
 export type RunnerChild = Pick<
@@ -27,10 +29,15 @@ export type RunnerChild = Pick<
   'stdout' | 'stderr' | 'on' | 'kill'
 >;
 
+export type SpawnedRunnerChild = RunnerChild & {
+  backend: RunnerBackend;
+};
+
 export interface Runner {
-  spawn(opts: RunnerOptions): RunnerChild;
+  spawn(opts: RunnerOptions): SpawnedRunnerChild;
   cleanup(projectDir: string): Promise<void>;
   isAvailable(): boolean;
+  supportsHostFallback(opts: RunnerOptions): boolean;
 }
 
 const DOCKER_IMAGE = 'dev-squad-agent:latest';
@@ -159,6 +166,22 @@ export function buildRunnerEnv(opts: RunnerOptions): NodeJS.ProcessEnv {
   return env;
 }
 
+export function isRecoverableDockerAuthFailure(text: string): boolean {
+  const normalized = text.toLowerCase();
+  return [
+    'not logged in',
+    'please run /login',
+    'invalid bearer token',
+    'authentication_failed',
+    '"type":"authentication_error"',
+    'failed to authenticate. api error: 401',
+  ].some((needle) => normalized.includes(needle));
+}
+
+function withBackend(child: RunnerChild, backend: RunnerBackend): SpawnedRunnerChild {
+  return Object.assign(child, { backend });
+}
+
 function buildDockerArgs(opts: RunnerOptions): string[] {
   const agentLabel = opts.pipelineAgent || 'session';
   const containerProject = `/home/node/Builds/${basename(opts.projectDir)}`;
@@ -211,12 +234,12 @@ function buildDockerArgs(opts: RunnerOptions): string[] {
 }
 
 export class HostRunner implements Runner {
-  spawn(opts: RunnerOptions): RunnerChild {
-    return nodeSpawn('claude', buildClaudeArgs(opts), {
+  spawn(opts: RunnerOptions): SpawnedRunnerChild {
+    return withBackend(nodeSpawn('claude', buildClaudeArgs(opts), {
       cwd: opts.projectDir,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: buildRunnerEnv(opts),
-    });
+    }), 'host');
   }
 
   async cleanup(_projectDir: string): Promise<void> {
@@ -226,17 +249,22 @@ export class HostRunner implements Runner {
   isAvailable(): boolean {
     return true;
   }
+
+  supportsHostFallback(opts: RunnerOptions): boolean {
+    void opts;
+    return false;
+  }
 }
 
 export class DockerRunner implements Runner {
-  spawn(opts: RunnerOptions): RunnerChild {
-    return nodeSpawn('docker', buildDockerArgs(opts), {
+  spawn(opts: RunnerOptions): SpawnedRunnerChild {
+    return withBackend(nodeSpawn('docker', buildDockerArgs(opts), {
       cwd: opts.projectDir,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: {
         ...process.env,
       },
-    });
+    }), 'docker');
   }
 
   async cleanup(projectDir: string): Promise<void> {
@@ -261,6 +289,11 @@ export class DockerRunner implements Runner {
     }
   }
 
+  supportsHostFallback(opts: RunnerOptions): boolean {
+    void opts;
+    return false;
+  }
+
   unavailableReason(): string {
     try {
       execFileSync('docker', ['info'], { stdio: 'pipe' });
@@ -283,7 +316,11 @@ export class AutoRunner implements Runner {
   private readonly docker = new DockerRunner();
   private warned = false;
 
-  spawn(opts: RunnerOptions): RunnerChild {
+  spawn(opts: RunnerOptions): SpawnedRunnerChild {
+    if (opts.forceHost) {
+      return this.host.spawn(opts);
+    }
+
     if (shouldPreferDocker(opts)) {
       if (this.docker.isAvailable()) {
         return this.docker.spawn(opts);
@@ -302,6 +339,10 @@ export class AutoRunner implements Runner {
 
   isAvailable(): boolean {
     return true;
+  }
+
+  supportsHostFallback(opts: RunnerOptions): boolean {
+    return shouldPreferDocker(opts) && !opts.forceHost;
   }
 
   private warnUnavailable() {

@@ -3,7 +3,12 @@ import { join, resolve, basename } from 'path';
 import { homedir } from 'os';
 import { createInterface } from 'readline';
 import { NextRequest, NextResponse } from 'next/server';
-import { createRunner, type PipelineAgentId, type RunnerOptions } from '../../../../pipeline/runner.ts';
+import {
+  createRunner,
+  isRecoverableDockerAuthFailure,
+  type PipelineAgentId,
+  type RunnerOptions,
+} from '../../../../pipeline/runner.ts';
 import { EMPTY_RUNTIME } from '@/lib/pipeline-runtime';
 import { readPendingApproval } from '@/lib/pipeline-approval';
 import { buildSupervisorSnapshot, getSupervisorRecommendation } from '@/lib/pipeline-supervisor';
@@ -41,6 +46,22 @@ const MANUAL_PROMPTS: Record<string, string> = {
 };
 
 const runner = createRunner();
+
+function roleLabel(agent: string): string {
+  switch (agent) {
+    case 'A':
+      return 'planner';
+    case 'B':
+      return 'plan reviewer';
+    case 'C':
+      return 'coder';
+    case 'D':
+      return 'tester';
+    case 'S':
+    default:
+      return 'supervisor';
+  }
+}
 
 function getManualState(): Record<string, unknown> {
   const eventsFile = join(MANUAL_DIR, 'manual-state.json');
@@ -154,12 +175,22 @@ function streamClaude(
 ): Promise<NextResponse> {
   return new Promise<NextResponse>((resolveResponse) => {
     const child = runner.spawn(opts);
+    const canFallbackToHost = child.backend === 'docker' && runner.supportsHostFallback(opts);
 
     const rl = createInterface({ input: child.stdout });
     let newSessionId = sessionId;
+    let lastResultText = '';
+    let stderr = '';
+    let diagnosticTail = '';
+
+    function noteDiagnostic(text: string) {
+      if (!text) return;
+      diagnosticTail = `${diagnosticTail}\n${text}`.slice(-12_000);
+    }
 
     rl.on('line', (line) => {
       if (!line.trim()) return;
+      noteDiagnostic(line);
       let event: Record<string, unknown>;
       try { event = JSON.parse(line); } catch { return; }
 
@@ -211,6 +242,7 @@ function streamClaude(
         }
       } else if (type === 'result') {
         newSessionId = (event.session_id as string) || sessionId;
+        lastResultText = typeof event.result === 'string' ? event.result : '';
         try {
           const s = JSON.parse(readFileSync(eventsFile, 'utf8'));
           if (!s.sessions) s.sessions = {};
@@ -229,7 +261,43 @@ function streamClaude(
       }
     });
 
-    child.on('close', () => {
+    child.stderr.on('data', (chunk) => {
+      const text = chunk.toString();
+      stderr += text;
+      noteDiagnostic(text);
+    });
+
+    child.on('close', async () => {
+      if (canFallbackToHost && isRecoverableDockerAuthFailure(`${diagnosticTail}\n${stderr}\n${lastResultText}`)) {
+        try {
+          const s = JSON.parse(readFileSync(eventsFile, 'utf8'));
+          const phase = s.currentPhase || 'concept';
+          s.events.push({
+            time: new Date().toISOString(),
+            agent: 'system',
+            phase,
+            type: 'status',
+            text: `Isolated ${roleLabel(agent)} auth is unavailable. Retrying on the host.`,
+          });
+          s.events.push({
+            time: new Date().toISOString(),
+            agent: 'S',
+            phase,
+            type: 'text',
+            text: `I could not keep the ${roleLabel(agent)} isolated for this turn because Claude subscription auth is unavailable in Docker right now, so I am retrying it on the host instead of failing the run.`,
+          });
+          writeFileSync(eventsFile, JSON.stringify(s, null, 2));
+        } catch {}
+
+        resolveResponse(await streamClaude(
+          { ...opts, forceHost: true },
+          eventsFile,
+          agent,
+          sessionId,
+        ));
+        return;
+      }
+
       // Set agent back to idle
       try {
         const s = JSON.parse(readFileSync(eventsFile, 'utf8'));

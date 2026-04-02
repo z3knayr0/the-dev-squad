@@ -108,4 +108,36 @@ assert.equal(codingUpdate.title, 'The coder is implementing the approved plan');
 assert.match(codingUpdate.summary, /locked plan/i);
 assert.match(codingUpdate.ask || '', /no action needed/i);
 
+const fallbackUpdate = getSupervisorUpdate(
+  {
+    concept: 'Tiny hello page',
+    currentPhase: 'coding',
+    pipelineStatus: 'running',
+    securityMode: 'fast',
+    runGoal: 'full-build',
+    stopAfterPhase: 'none',
+    activeAgent: 'C',
+    buildComplete: false,
+    agentStatus: { A: 'done', B: 'done', C: 'active', D: 'idle', S: 'idle' },
+    runtime: {
+      activeTurn: {
+        agent: 'C',
+        phase: 'coding',
+        status: 'running',
+        lastEventAt: '2026-04-02T00:00:00.000Z',
+        promptSummary: 'Build the app',
+        autoResumeCount: 0,
+      },
+    },
+    events: [
+      { time: '2026-04-02T00:00:00.000Z', agent: 'system', phase: 'coding', type: 'status', text: 'Isolated coder auth is unavailable. Retrying on the host.' },
+    ],
+  },
+  null
+);
+
+assert.equal(fallbackUpdate.title, 'An isolated worker fell back to host');
+assert.match(fallbackUpdate.summary, /subscription auth/i);
+assert.match(fallbackUpdate.ask || '', /graceful fallback/i);
+
 console.log('supervisor snapshot checks passed');

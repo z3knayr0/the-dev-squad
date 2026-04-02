@@ -69,6 +69,12 @@ That hook is useful, but it is not a security boundary against a hostile or jail
 5. Narrow network access by role.
 6. Fall back gracefully to host execution when sandboxing is unavailable.
 
+Current practical note:
+
+- the Docker worker path exists now
+- Claude subscription auth inside headless/container Claude Code is still flaky in practice
+- when isolated auth is unavailable, the current implementation should retry that turn on the host instead of failing the whole run
+
 ## Team Mapping
 
 The sandbox design is role-first:

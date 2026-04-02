@@ -172,3 +172,9 @@ These are not realistic promises for the current hook architecture:
 Build `v0.4` next.
 
 `v0.3` closed the most practical approval-flow gap. The next meaningful security improvement is sandboxed execution, because the major remaining risks now come from Bash authority and host filesystem access rather than missing approval plumbing.
+
+Current `v0.4` status:
+
+- the sandbox runner foundation and hybrid Docker worker path are in place
+- Claude subscription auth for headless/container Claude Code is still an upstream blocker for fully isolated subscription-backed workers
+- until that path works reliably, sandbox-eligible workers should fall back to host execution instead of hard-failing a run

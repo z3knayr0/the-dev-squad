@@ -41,7 +41,7 @@ import {
   summarizePrompt,
   type PipelineRuntimeState,
 } from '../src/lib/pipeline-runtime.ts';
-import { createRunner } from './runner.ts';
+import { createRunner, isRecoverableDockerAuthFailure } from './runner.ts';
 
 // ── Config ──────────────────────────────────────────────────────────
 
@@ -353,6 +353,19 @@ function buildApprovalDescription(toolInput: Record<string, unknown>): string {
   return JSON.stringify(toolInput);
 }
 
+function agentRoleLabel(agent: AgentId): string {
+  switch (agent) {
+    case 'A':
+      return 'planner';
+    case 'B':
+      return 'plan reviewer';
+    case 'C':
+      return 'coder';
+    case 'D':
+      return 'tester';
+  }
+}
+
 async function runClaudeTurn(
   agent: AgentId,
   prompt: string,
@@ -361,6 +374,7 @@ async function runClaudeTurn(
     resume?: string;
     jsonSchema?: Record<string, unknown>;
     autoResumeCount?: number;
+    forceHost?: boolean;
   }
 ): Promise<{
   result: string;
@@ -369,11 +383,13 @@ async function runClaudeTurn(
   permissionDenied: { toolName: string; toolInput: Record<string, unknown> } | null;
   interruptedForApproval: boolean;
   stalled: boolean;
+  fallbackToHost: boolean;
+  fallbackReason?: string;
 }> {
   return new Promise((resolve, reject) => {
     const safePrompt = prompt.startsWith('-') ? 'User says: ' + prompt : prompt;
     const effort = AGENT_EFFORT[agent] || 'high';
-    const child = runner.spawn({
+    const runnerOpts = {
       prompt: safePrompt,
       projectDir,
       pipelineDir: BUILDUI_DIR,
@@ -390,7 +406,11 @@ async function runClaudeTurn(
             join(BUILDUI_DIR, 'checklist-template.md'),
           ]
         : undefined,
-    });
+      forceHost: opts.forceHost,
+    };
+    const child = runner.spawn(runnerOpts);
+    const usedDocker = child.backend === 'docker';
+    const canFallbackToHost = usedDocker && runner.supportsHostFallback(runnerOpts);
 
     startActiveTurn(agent, safePrompt, opts.autoResumeCount || 0, opts.resume);
 
@@ -404,6 +424,12 @@ async function runClaudeTurn(
     let stalled = false;
     let settled = false;
     let lastStreamActivityAt = Date.now();
+    let diagnosticTail = '';
+
+    function noteDiagnostic(text: string) {
+      if (!text) return;
+      diagnosticTail = `${diagnosticTail}\n${text}`.slice(-12_000);
+    }
 
     const rl = createInterface({ input: child.stdout });
     const stallWatcher = setInterval(() => {
@@ -433,12 +459,14 @@ async function runClaudeTurn(
         permissionDenied,
         interruptedForApproval,
         stalled,
+        fallbackToHost: false,
       });
       child.kill('SIGTERM');
     }, 5_000);
 
     rl.on('line', (line) => {
       if (!line.trim()) return;
+      noteDiagnostic(line);
       lastStreamActivityAt = Date.now();
       noteActiveTurnActivity(agent);
 
@@ -545,6 +573,7 @@ async function runClaudeTurn(
                   permissionDenied,
                   interruptedForApproval,
                   stalled,
+                  fallbackToHost: false,
                 });
                 clearInterval(stallWatcher);
                 child.kill('SIGTERM');
@@ -556,6 +585,9 @@ async function runClaudeTurn(
       } else if (type === 'result') {
         lastResult = event;
         structured = extractStructuredSignal(event.structured_output, event.result) || structured;
+        if (typeof event.result === 'string') {
+          noteDiagnostic(event.result);
+        }
 
         const usage = event.usage as Record<string, unknown>;
         if (usage) {
@@ -580,11 +612,32 @@ async function runClaudeTurn(
     });
 
     let stderr = '';
-    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    child.stderr.on('data', (chunk) => {
+      const text = chunk.toString();
+      stderr += text;
+      noteDiagnostic(text);
+    });
 
     child.on('close', (code) => {
       if (settled) return;
       clearInterval(stallWatcher);
+
+      const combinedFailureText = `${diagnosticTail}\n${stderr}\n${String(lastResult?.result || '')}`;
+      if (canFallbackToHost && isRecoverableDockerAuthFailure(combinedFailureText)) {
+        settled = true;
+        clearActiveTurn(agent);
+        resolve({
+          result: '',
+          sessionId: currentSessionId,
+          structured,
+          permissionDenied,
+          interruptedForApproval,
+          stalled,
+          fallbackToHost: true,
+          fallbackReason: 'Claude subscription auth is unavailable inside the isolated worker right now.',
+        });
+        return;
+      }
 
       if (code !== 0 || !lastResult) {
         clearActiveTurn(agent);
@@ -603,6 +656,7 @@ async function runClaudeTurn(
         permissionDenied,
         interruptedForApproval,
         stalled,
+        fallbackToHost: false,
       });
     });
 
@@ -628,6 +682,7 @@ async function claude(
   let currentPrompt = prompt;
   let currentResume = opts.resume;
   let autoResumeCount = 0;
+  let forceHost = false;
 
   while (true) {
     const turn = await runClaudeTurn(agent, currentPrompt, {
@@ -635,7 +690,23 @@ async function claude(
       resume: currentResume,
       jsonSchema: opts.jsonSchema,
       autoResumeCount,
+      forceHost,
     });
+
+    if (turn.fallbackToHost && !forceHost) {
+      forceHost = true;
+      emit(
+        'system',
+        state.currentPhase,
+        'status',
+        `Isolated ${agentRoleLabel(agent)} auth is unavailable. Retrying on the host.`
+      );
+      emitSupervisor(
+        state.currentPhase,
+        `I could not keep the ${agentRoleLabel(agent)} isolated for this turn because Claude subscription auth is unavailable in Docker right now, so I am retrying it on the host instead of failing the run.`
+      );
+      continue;
+    }
 
     if (turn.stalled) {
       if (turn.sessionId && canAutoResumeTurn(agent, state.currentPhase) && autoResumeCount < MAX_AUTO_RESUMES) {

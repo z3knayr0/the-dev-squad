@@ -74,12 +74,25 @@ function findLatestEvent(
   return null;
 }
 
+function hasRecentMatchingEvent(
+  events: PipelineEventLike[] | undefined,
+  predicate: (event: PipelineEventLike) => boolean,
+  limit: number = 8
+): boolean {
+  if (!events || events.length === 0) return false;
+  return events.slice(-limit).some(predicate);
+}
+
 export function getSupervisorRecommendation(
   state: PipelineStateLike,
   pendingApproval: PendingApproval | null
 ): SupervisorRecommendation {
   const activeTurn = state.runtime?.activeTurn;
   const latestFailure = findLatestEvent(state.events, ['failure', 'permission_denied', 'issue']);
+  const recentHostFallback = hasRecentMatchingEvent(
+    state.events,
+    (event) => event.type === 'status' && /retrying on the host/i.test(event.text),
+  );
 
   if (pendingApproval?.approved === null) {
     return {
@@ -116,6 +129,18 @@ export function getSupervisorRecommendation(
         : 'A planning/review turn looks stalled. Resume it from the saved session instead of resetting the run.',
       actionLabel: 'Resume stalled run',
       chatCommand: 'resume stalled run',
+      severity: 'warning',
+    };
+  }
+
+  if (
+    recentHostFallback &&
+    state.pipelineStatus === 'running'
+  ) {
+    return {
+      title: 'Graceful host fallback is active',
+      detail: 'A Docker-isolated worker could not authenticate with Claude on your subscription, so the supervisor retried that turn on the host instead of failing the run.',
+      actionLabel: 'Keep watching',
       severity: 'warning',
     };
   }
@@ -177,6 +202,10 @@ export function getSupervisorUpdate(
 ): SupervisorUpdate {
   const activeTurn = state.runtime?.activeTurn;
   const recommendation = getSupervisorRecommendation(state, pendingApproval);
+  const recentHostFallback = hasRecentMatchingEvent(
+    state.events,
+    (event) => event.type === 'status' && /retrying on the host/i.test(event.text),
+  );
 
   if (pendingApproval?.approved === null) {
     return {
@@ -197,6 +226,18 @@ export function getSupervisorUpdate(
       summary: 'The planner and reviewer finished the plan and I paused cleanly before coding. The team is waiting for your go-ahead to hand the work to the coder.',
       ask: 'Tell me to continue when you want implementation to begin.',
       severity: 'info',
+    };
+  }
+
+  if (
+    recentHostFallback &&
+    state.pipelineStatus === 'running'
+  ) {
+    return {
+      title: 'An isolated worker fell back to host',
+      summary: 'The Docker worker path is in place, but Claude subscription auth was unavailable for that isolated turn. The supervisor retried it on the host so the run could keep moving.',
+      ask: 'No action needed unless you want to stop the run. This was a graceful fallback, not a fatal error.',
+      severity: 'warning',
     };
   }
 
