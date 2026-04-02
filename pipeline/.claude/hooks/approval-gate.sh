@@ -109,6 +109,18 @@ resolve_filepath() {
   echo "$fp"
 }
 
+find_project_root() {
+  local check="$CWD"
+  while [ "$check" != "/" ]; do
+    if [ -f "$check/pipeline-events.json" ]; then
+      printf '%s\n' "$check"
+      return
+    fi
+    check=$(dirname "$check")
+  done
+  printf '%s\n' "$CWD"
+}
+
 # ── Per-agent Write/Edit/NotebookEdit rules ──────────────────────────
 
 case "$TOOL_NAME" in
@@ -217,6 +229,8 @@ if [ "$TOOL_NAME" = "Bash" ]; then
   esac
 
   COMMAND=$(echo "$TOOL_INPUT" | jq -r '.command // ""')
+  PROJECT_ROOT=$(find_project_root)
+  APPROVED_BASH_FILE="$PROJECT_ROOT/pipeline-approved-bash.json"
 
   # Block any command referencing .claude, hooks, or settings
   case "$COMMAND" in
@@ -259,6 +273,16 @@ if [ "$TOOL_NAME" = "Bash" ]; then
 
   # In strict mode, all Bash from C/D requires explicit user approval.
   if [ "$SECURITY_MODE" = "strict" ] && { [ "$AGENT" = "C" ] || [ "$AGENT" = "D" ]; }; then
+    if [ -f "$APPROVED_BASH_FILE" ]; then
+      GRANT_AGENT=$(jq -r '.agent // ""' "$APPROVED_BASH_FILE" 2>/dev/null || echo "")
+      GRANT_COMMAND=$(jq -r '.command // ""' "$APPROVED_BASH_FILE" 2>/dev/null || echo "")
+      if [ "$GRANT_AGENT" = "$AGENT" ] && [ "$GRANT_COMMAND" = "$COMMAND" ]; then
+        rm -f "$APPROVED_BASH_FILE" 2>/dev/null || true
+        echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}'
+        exit 0
+      fi
+    fi
+
     jq -n --arg reason "Strict mode: Agent $AGENT Bash requires approval" '{
       hookSpecificOutput: {
         hookEventName: "PreToolUse",

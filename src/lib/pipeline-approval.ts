@@ -17,9 +17,22 @@ export interface PendingApproval {
 }
 
 export const PENDING_APPROVAL_FILE = 'pipeline-pending.json';
+export const APPROVED_BASH_GRANT_FILE = 'pipeline-approved-bash.json';
+
+export interface ApprovedBashGrant {
+  requestId: string;
+  projectDir: string;
+  agent: string;
+  command: string;
+  createdAt: string;
+}
 
 export function pendingApprovalPath(projectDir: string): string {
   return join(projectDir, PENDING_APPROVAL_FILE);
+}
+
+export function approvedBashGrantPath(projectDir: string): string {
+  return join(projectDir, APPROVED_BASH_GRANT_FILE);
 }
 
 export function readPendingApproval(projectDir: string): PendingApproval | null {
@@ -35,6 +48,31 @@ export function readPendingApproval(projectDir: string): PendingApproval | null 
 
 export function writePendingApproval(projectDir: string, pending: PendingApproval): void {
   writeFileSync(pendingApprovalPath(projectDir), JSON.stringify(pending, null, 2));
+}
+
+export function readApprovedBashGrant(projectDir: string): ApprovedBashGrant | null {
+  const file = approvedBashGrantPath(projectDir);
+  if (!existsSync(file)) return null;
+
+  try {
+    return JSON.parse(readFileSync(file, 'utf8')) as ApprovedBashGrant;
+  } catch {
+    return null;
+  }
+}
+
+export function writeApprovedBashGrant(projectDir: string, grant: ApprovedBashGrant): void {
+  writeFileSync(approvedBashGrantPath(projectDir), JSON.stringify(grant, null, 2));
+}
+
+export function clearApprovedBashGrant(projectDir: string, requestId?: string): void {
+  const current = readApprovedBashGrant(projectDir);
+  if (!current) return;
+  if (requestId && current.requestId !== requestId) return;
+
+  try {
+    unlinkSync(approvedBashGrantPath(projectDir));
+  } catch {}
 }
 
 export function clearPendingApproval(projectDir: string, requestId?: string): void {

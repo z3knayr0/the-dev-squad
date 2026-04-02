@@ -22,9 +22,12 @@ import { join, resolve, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
 import {
+  clearApprovedBashGrant,
   clearPendingApproval,
+  writeApprovedBashGrant,
   waitForPendingApproval,
   writePendingApproval,
+  type ApprovedBashGrant,
   type PendingApproval,
 } from '../src/lib/pipeline-approval.ts';
 
@@ -303,6 +306,7 @@ async function runClaudeTurn(
   sessionId: string;
   structured: Record<string, unknown> | null;
   permissionDenied: { toolName: string; toolInput: Record<string, unknown> } | null;
+  interruptedForApproval: boolean;
 }> {
   return new Promise((resolve, reject) => {
     const safePrompt = prompt.startsWith('-') ? 'User says: ' + prompt : prompt;
@@ -334,9 +338,13 @@ async function runClaudeTurn(
     });
 
     let lastResult: Record<string, unknown> | null = null;
+    let currentSessionId = opts.resume || '';
     let structured: Record<string, unknown> | null = null;
     const toolNames = new Map<string, string>();
+    const toolInputs = new Map<string, Record<string, unknown>>();
     let permissionDenied: { toolName: string; toolInput: Record<string, unknown> } | null = null;
+    let interruptedForApproval = false;
+    let settled = false;
 
     const rl = createInterface({ input: child.stdout });
 
@@ -352,7 +360,9 @@ async function runClaudeTurn(
 
       const type = event.type as string;
 
-      if (type === 'assistant') {
+      if (type === 'system') {
+        currentSessionId = (event.session_id as string) || currentSessionId;
+      } else if (type === 'assistant') {
         const msg = event.message as Record<string, unknown>;
         const content = msg?.content as Array<Record<string, unknown>>;
         if (!content) return;
@@ -362,7 +372,10 @@ async function runClaudeTurn(
             const toolName = block.name as string;
             const input = block.input as Record<string, unknown>;
             const toolUseId = block.id as string;
-            if (toolUseId) toolNames.set(toolUseId, toolName);
+            if (toolUseId) {
+              toolNames.set(toolUseId, toolName);
+              toolInputs.set(toolUseId, input);
+            }
 
             let desc = toolName;
             let detail = '';
@@ -419,6 +432,29 @@ async function runClaudeTurn(
               if (errorText) {
                 emit(agent, state.currentPhase, 'permission_denied', errorText);
               }
+
+              const strictBashAsk =
+                state.securityMode === 'strict' &&
+                (agent === 'C' || agent === 'D') &&
+                toolName === 'Bash';
+
+              if (strictBashAsk && !settled) {
+                permissionDenied = {
+                  toolName: 'Bash',
+                  toolInput: toolInputs.get(toolUseId) || {},
+                };
+                interruptedForApproval = true;
+                settled = true;
+                resolve({
+                  result: '',
+                  sessionId: currentSessionId,
+                  structured,
+                  permissionDenied,
+                  interruptedForApproval,
+                });
+                child.kill('SIGTERM');
+                return;
+              }
             }
           }
         }
@@ -451,6 +487,8 @@ async function runClaudeTurn(
     child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
 
     child.on('close', (code) => {
+      if (settled) return;
+
       if (code !== 0 || !lastResult) {
         emit('system', state.currentPhase, 'failure', `Agent ${agent} failed (exit ${code})`);
         if (stderr) console.error(stderr.slice(0, 500));
@@ -458,15 +496,18 @@ async function runClaudeTurn(
         return;
       }
 
+      settled = true;
       resolve({
         result: (lastResult.result as string) || '',
-        sessionId: (lastResult.session_id as string) || '',
+        sessionId: (lastResult.session_id as string) || currentSessionId,
         structured,
         permissionDenied,
+        interruptedForApproval,
       });
     });
 
     child.on('error', (err) => {
+      if (settled) return;
       emit('system', state.currentPhase, 'failure', `Failed to spawn agent ${agent}: ${err.message}`);
       reject(err);
     });
@@ -496,7 +537,8 @@ async function claude(
     const strictBashApproval =
       state.securityMode === 'strict' &&
       (agent === 'C' || agent === 'D') &&
-      denied?.toolName === 'Bash';
+      denied?.toolName === 'Bash' &&
+      turn.interruptedForApproval;
 
     if (!strictBashApproval) {
       return {
@@ -525,6 +567,7 @@ async function claude(
 
     const approved = await waitForPendingApproval(projectDir, pending.requestId);
     clearPendingApproval(projectDir, pending.requestId);
+    clearApprovedBashGrant(projectDir);
 
     if (approved === null) {
       emit('system', state.currentPhase, 'failure', `Approval request expired for Agent ${agent}`);
@@ -539,9 +582,19 @@ async function claude(
     );
 
     currentResume = turn.sessionId;
-    currentPrompt = approved
-      ? 'The user approved your previous Bash request. Retry that exact command if it is still needed, then continue your task from where you left off.'
-      : 'The user denied your previous Bash request. Do not retry that command. Continue without it if possible, or explain exactly what is blocked.';
+    if (approved) {
+      const grant: ApprovedBashGrant = {
+        requestId: pending.requestId,
+        projectDir,
+        agent,
+        command: String(denied.toolInput.command || ''),
+        createdAt: new Date().toISOString(),
+      };
+      writeApprovedBashGrant(projectDir, grant);
+      currentPrompt = 'The user approved your previous Bash request. Retry that exact command if it is still needed, then continue your task from where you left off.';
+    } else {
+      currentPrompt = 'The user denied your previous Bash request. Do not retry that command. Continue without it if possible, or explain exactly what is blocked.';
+    }
   }
 }
 

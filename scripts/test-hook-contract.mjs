@@ -16,6 +16,7 @@ const tempHome = join(tempRoot, 'home');
 const buildsDir = join(tempHome, 'Builds');
 const projectDir = join(buildsDir, 'contract-project');
 const siblingDir = join(buildsDir, 'sibling-project');
+const approvedBashGrantFile = join(projectDir, 'pipeline-approved-bash.json');
 
 mkdirSync(projectDir, { recursive: true });
 mkdirSync(siblingDir, { recursive: true });
@@ -73,6 +74,16 @@ function formatResult(result) {
   if (result.stderr) parts.push(`stderr=${JSON.stringify(result.stderr)}`);
   parts.push(`status=${result.status}`);
   return parts.join(' ');
+}
+
+function writeApprovedBashGrant(agent, command) {
+  writeFileSync(approvedBashGrantFile, JSON.stringify({
+    requestId: 'test-grant',
+    projectDir,
+    agent,
+    command,
+    createdAt: new Date().toISOString(),
+  }, null, 2));
 }
 
 const checks = [
@@ -136,6 +147,19 @@ const checks = [
     run: () => invokeHook({ agent: 'C', toolName: 'Bash', toolInput: { command: 'pwd' }, securityMode: 'strict' }),
   },
   {
+    name: 'C approved Bash runs once in strict mode',
+    expect: 'allow',
+    run: () => {
+      writeApprovedBashGrant('C', 'pwd');
+      return invokeHook({ agent: 'C', toolName: 'Bash', toolInput: { command: 'pwd' }, securityMode: 'strict' });
+    },
+  },
+  {
+    name: 'C approved Bash grant is consumed after one use',
+    expect: 'ask',
+    run: () => invokeHook({ agent: 'C', toolName: 'Bash', toolInput: { command: 'pwd' }, securityMode: 'strict' }),
+  },
+  {
     name: 'D can use StructuredOutput',
     expect: 'allow',
     run: () => invokeHook({ agent: 'D', toolName: 'StructuredOutput', toolInput: {} }),
@@ -154,6 +178,14 @@ const checks = [
     name: 'D Bash asks in strict mode',
     expect: 'ask',
     run: () => invokeHook({ agent: 'D', toolName: 'Bash', toolInput: { command: 'pwd' }, securityMode: 'strict' }),
+  },
+  {
+    name: 'D approved Bash runs once in strict mode',
+    expect: 'allow',
+    run: () => {
+      writeApprovedBashGrant('D', 'pwd');
+      return invokeHook({ agent: 'D', toolName: 'Bash', toolInput: { command: 'pwd' }, securityMode: 'strict' });
+    },
   },
   {
     name: 'C cannot use WebSearch',
