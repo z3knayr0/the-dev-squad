@@ -54,7 +54,7 @@ This saves me hours every day.
 | **D** | Tester | Reviews C's code against the plan, runs it, catches bugs. Loops with C until everything passes. |
 | **S** | Supervisor | Your diagnostic assistant. If something breaks or loops, S reads the event log and helps figure out what went wrong. |
 
-Each agent is a separate Claude Code session running Claude Opus 4.6. They communicate through structured JSON signals routed by an orchestrator. Every restriction is enforced by a `PreToolUse` hook — the agents literally cannot break the rules.
+Each agent is a separate Claude Code session running Claude Opus 4.6. They communicate through structured JSON signals routed by an orchestrator. Restrictions are enforced by a `PreToolUse` hook — a guardrail that prevents agents from accidentally drifting out of their lane. See [SECURITY.md](SECURITY.md) for the threat model and known limitations.
 
 ## How It Works
 
@@ -180,7 +180,7 @@ The S panel on the left is **not** part of the pipeline. S is your diagnostic as
 
 ## Security
 
-Agents are constrained by hooks, not prompts. A `PreToolUse` hook gates every tool call:
+Agents are constrained by a `PreToolUse` hook that gates every tool call. The hook prevents accidental lane drift — it is not a security sandbox. See [SECURITY.md](SECURITY.md) for details.
 
 | Agent | Can Write | Can Run Bash | Can Spawn Agents |
 |-------|-----------|-------------|-----------------|

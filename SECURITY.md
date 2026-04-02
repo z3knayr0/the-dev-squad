@@ -1,8 +1,12 @@
 # Security
 
+## Threat Model
+
+The hook system prevents agents from **accidentally drifting out of their lane** during normal pipeline operation. It is NOT a security sandbox against adversarial or jailbreak-prone models. If your threat model requires defense against a hostile agent, you need OS-level isolation (containers, chroot, seccomp) — not a bash hook.
+
 ## Hook Enforcement Model
 
-Agent permissions are enforced by a `PreToolUse` hook (`pipeline/.claude/hooks/approval-gate.sh`), not by prompts. The hook runs before every tool call for every agent. It is the only security boundary — prompts provide context, the hook provides law.
+Agent permissions are enforced by a `PreToolUse` hook (`pipeline/.claude/hooks/approval-gate.sh`), not by prompts. The hook runs before every tool call for every agent. Prompts provide context — the hook provides guardrails.
 
 ## Hardened in v0.2.3
 
