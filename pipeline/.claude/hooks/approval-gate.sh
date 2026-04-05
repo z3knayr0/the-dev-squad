@@ -16,7 +16,8 @@
 # AGENT C (Coder):      Can write in current project except plan.md and .claude/. No Agent tool.
 # AGENT D (Tester):     Cannot write anything. No Agent tool.
 #
-# ALL: Write/Edit outside ~/Builds/ blocked. .claude/ paths blocked for all agents.
+# ALL: Write/Edit outside ~/Builds/ or the active pipeline project root blocked.
+# .claude/ paths blocked for all agents.
 # MODES: fast=default autonomy, strict=require approval for all C/D Bash calls.
 # DEFAULT: DENY (any unrecognized tool is blocked, not allowed)
 #
@@ -148,17 +149,31 @@ case "$TOOL_NAME" in
     BUILDS_DIR_CI=$(lower_path "$BUILDS_DIR")
     FILEPATH_CI=$(lower_path "$FILEPATH")
 
-    # Must be inside ~/Builds/ (with trailing slash)
-    if [[ "$FILEPATH_CI" != "$BUILDS_DIR_CI/"* ]]; then
-      echo "BLOCKED: Cannot write to $FILEPATH — outside ~/Builds/" >&2
+    PROJECT_ROOT=$(find_project_root)
+    PROJECT_ROOT=$(readlink -f "$PROJECT_ROOT" 2>/dev/null || echo "$PROJECT_ROOT")
+    PROJECT_ROOT_CI=$(lower_path "$PROJECT_ROOT")
+    EVENTS_FILE="$PROJECT_ROOT/pipeline-events.json"
+
+    IN_BUILDS=0
+    IN_PIPELINE_PROJECT=0
+
+    if [[ "$FILEPATH_CI" == "$BUILDS_DIR_CI/"* ]]; then
+      IN_BUILDS=1
+    fi
+
+    if [ -f "$EVENTS_FILE" ] && [[ "$FILEPATH_CI" == "$PROJECT_ROOT_CI/"* ]]; then
+      IN_PIPELINE_PROJECT=1
+    fi
+
+    if [ "$IN_BUILDS" -ne 1 ] && [ "$IN_PIPELINE_PROJECT" -ne 1 ]; then
+      echo "BLOCKED: Cannot write to $FILEPATH — outside the active pipeline project" >&2
       exit 2
     fi
 
-    # Jail non-S agents to the current project directory (CWD), not all of ~/Builds/
+    # Jail non-S agents to the active project root, regardless of whether the
+    # project lives under ~/Builds or an explicitly targeted external repo.
     if [ "$AGENT" != "S" ]; then
-      PROJECT_DIR=$(readlink -f "$CWD" 2>/dev/null || echo "$CWD")
-      PROJECT_DIR_CI=$(lower_path "$PROJECT_DIR")
-      if [[ "$PROJECT_DIR_CI" == "$BUILDS_DIR_CI/"* ]] && [[ "$FILEPATH_CI" != "$PROJECT_DIR_CI/"* ]]; then
+      if [[ "$FILEPATH_CI" != "$PROJECT_ROOT_CI/"* ]]; then
         echo "BLOCKED: Cannot write to $FILEPATH — outside current project" >&2
         exit 2
       fi

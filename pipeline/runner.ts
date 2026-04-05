@@ -206,6 +206,15 @@ export function getNetworkProfile(agent?: PipelineAgentId): 'research' | 'build'
   }
 }
 
+const PERMISSION_MODE = process.env.PIPELINE_PERMISSION_MODE || 'auto';
+
+function permissionArgs(): string[] {
+  if (PERMISSION_MODE === 'dangerously-skip-permissions') {
+    return ['--dangerously-skip-permissions'];
+  }
+  return ['--permission-mode', PERMISSION_MODE];
+}
+
 export function buildClaudeArgs(opts: RunnerOptions): string[] {
   if (!hasValue(opts.roleFile) && !hasValue(opts.systemPrompt)) {
     throw new Error('RunnerOptions requires either roleFile or systemPrompt');
@@ -213,7 +222,7 @@ export function buildClaudeArgs(opts: RunnerOptions): string[] {
 
   const args: string[] = [
     '-p', opts.prompt,
-    '--permission-mode', 'auto',
+    ...permissionArgs(),
     '--model', opts.model,
     '--output-format', 'stream-json',
     '--verbose',
@@ -243,7 +252,7 @@ export function buildClaudeArgs(opts: RunnerOptions): string[] {
 function buildContainerClaudeArgs(opts: RunnerOptions): string[] {
   const args: string[] = [
     '-p', opts.prompt,
-    '--permission-mode', 'auto',
+    ...permissionArgs(),
     '--model', opts.model,
     '--output-format', 'stream-json',
     '--verbose',

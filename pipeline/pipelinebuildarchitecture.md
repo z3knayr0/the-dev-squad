@@ -98,7 +98,8 @@ Each agent runs as a separate Claude Code session. Sessions are spawned with:
 claude --permission-mode auto --model claude-opus-4-6
 ```
 
-- `--permission-mode auto` uses Claude's classifier for general safety, but pipeline builds can still surface approval prompts for Bash depending on command risk and future strict-mode settings.
+- `--permission-mode auto` is the default. Override via the dashboard Permission Mode toggle or `PIPELINE_PERMISSION_MODE` env var (`auto`, `plan`, or `dangerously-skip-permissions`).
+- Auto mode uses Claude's classifier for general safety, but pipeline builds can still surface approval prompts for Bash depending on command risk and future strict-mode settings.
 - Our PreToolUse hook stacks on top — enforces per-agent restrictions (A can only write plan.md, D can't write, etc.).
 - `--model claude-opus-4-6` sets Opus 4.6.
 - Each session gets a CLAUDE.md or system prompt defining its role, what it can do, and who it talks to.

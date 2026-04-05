@@ -267,7 +267,8 @@ Additional protections:
 - The planner and plan reviewer can use `WebSearch` and `WebFetch` for direct-source research and review
 - Fast mode auto-approves safer Bash and asks for riskier Bash
 - Strict mode requires approval for every Bash call from the coder and tester
-- All sessions use `--permission-mode auto` for Claude's built-in safety classifier
+- All sessions default to `--permission-mode auto` for Claude's built-in safety classifier
+- Override with `PIPELINE_PERMISSION_MODE` env var (e.g. `plan`, `auto`, or `dangerously-skip-permissions`)
 
 Roadmap:
 - **Fast mode** stays the default for autonomy

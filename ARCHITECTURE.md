@@ -88,7 +88,7 @@ Additional protections:
 - Plan is locked after the plan reviewer approves
 - Agent tool blocked for all agents (prevents recursive spawning)
 - Strict mode requires approval for every Bash call from the coder and tester
-- `--permission-mode auto` adds Claude's AI safety classifier on top
+- `--permission-mode auto` adds Claude's AI safety classifier on top (configurable via dashboard toggle or `PIPELINE_PERMISSION_MODE` env var)
 
 Roadmap:
 - **Fast mode** is the current autonomous default
@@ -130,9 +130,10 @@ claude -p "<prompt>" \
   --verbose
 ```
 
-- `--permission-mode auto` — Claude's AI classifier handles general safety
+- `--permission-mode auto` — Claude's AI classifier handles general safety (default; override with `PIPELINE_PERMISSION_MODE` env var or the dashboard Permission Mode toggle)
 - `--output-format stream-json` — real-time streaming for the viewer
 - `PIPELINE_AGENT` env var — tells the hook which agent is running
+- `PIPELINE_PERMISSION_MODE` env var — `auto` (default), `plan`, or `dangerously-skip-permissions`
 - Role files and shared doctrine provide the team model; hooks provide the lighter safety/discipline guardrails around it
 - Session ids are now persisted mid-turn so stalled A/B runs can be recovered instead of always forcing a reset
 - Future hardening replaces direct host spawning with a sandbox runner; see [SECURITY-ROADMAP.md](SECURITY-ROADMAP.md) and [SANDBOX-RUNNER-PLAN.md](SANDBOX-RUNNER-PLAN.md)

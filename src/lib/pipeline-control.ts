@@ -8,6 +8,7 @@ export const BUILDS_DIR = join(homedir(), 'Builds');
 export const STAGING_DIR = join(BUILDS_DIR, '.staging');
 
 export type SecurityMode = 'fast' | 'strict';
+export type PermissionMode = 'auto' | 'plan' | 'dangerously-skip-permissions';
 export type RunGoal = 'full-build' | 'plan-only';
 export type ResumeOutcome = 'continue-approved-plan' | 'resume-stalled-turn';
 
@@ -70,16 +71,19 @@ export function appendPipelineEvent(
   writeJson(file, state);
 }
 
-function spawnOrchestrator(projectDir: string, securityMode: SecurityMode, aSession?: string) {
+function spawnOrchestrator(projectDir: string, securityMode: SecurityMode, aSession?: string, permissionMode?: PermissionMode) {
   const orchestratorPath = join(BUILDUI_DIR, 'orchestrator.ts');
   const args = ['tsx', orchestratorPath, '--project-dir', projectDir];
   if (aSession) args.push('--a-session', aSession);
+
+  const env: NodeJS.ProcessEnv = { ...process.env, PIPELINE_SECURITY_MODE: securityMode };
+  if (permissionMode) env.PIPELINE_PERMISSION_MODE = permissionMode;
 
   const child = spawn('npx', args, {
     cwd: projectDir,
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: true,
-    env: { ...process.env, PIPELINE_SECURITY_MODE: securityMode },
+    env,
   });
 
   child.stdout?.on('data', (data) => process.stdout.write(data));
@@ -89,9 +93,13 @@ function spawnOrchestrator(projectDir: string, securityMode: SecurityMode, aSess
 
 export function startPipelineRun(options: {
   securityMode?: SecurityMode;
+  permissionMode?: PermissionMode;
   runGoal?: RunGoal;
-}): { success: boolean; error?: string; projectDir?: string; securityMode?: SecurityMode; runGoal?: RunGoal } {
+}): { success: boolean; error?: string; projectDir?: string; securityMode?: SecurityMode; permissionMode?: PermissionMode; runGoal?: RunGoal } {
   const securityMode = options.securityMode === 'strict' ? 'strict' : 'fast';
+  const permissionMode: PermissionMode = options.permissionMode === 'plan' ? 'plan'
+    : options.permissionMode === 'dangerously-skip-permissions' ? 'dangerously-skip-permissions'
+    : 'auto';
   const runGoal = options.runGoal === 'plan-only' ? 'plan-only' : 'full-build';
 
   const activeProject = findLatestProject();
@@ -146,6 +154,7 @@ export function startPipelineRun(options: {
 
   stagingState.projectDir = projectDir;
   stagingState.securityMode = securityMode;
+  stagingState.permissionMode = permissionMode;
   stagingState.runGoal = runGoal;
   stagingState.stopAfterPhase = runGoal === 'plan-only' ? 'plan-review' : 'none';
   stagingState.pipelineStatus = 'running';
@@ -156,9 +165,9 @@ export function startPipelineRun(options: {
     rmSync(STAGING_DIR, { recursive: true, force: true });
   } catch {}
 
-  spawnOrchestrator(projectDir, securityMode, aSession || undefined);
+  spawnOrchestrator(projectDir, securityMode, aSession || undefined, permissionMode);
 
-  return { success: true, projectDir, securityMode, runGoal };
+  return { success: true, projectDir, securityMode, permissionMode, runGoal };
 }
 
 export function setStopAfterReview(enabled: boolean, projectDir?: string): { success: boolean; error?: string; stopAfterPhase?: string; projectDir?: string } {
@@ -240,7 +249,10 @@ export function resumePipelineRun(projectDir?: string): { success: boolean; erro
   state.events = events;
   writeJson(file, state);
 
-  spawnOrchestrator(resolvedProjectDir, state.securityMode === 'strict' ? 'strict' : 'fast');
+  const resumePermission: PermissionMode = state.permissionMode === 'plan' ? 'plan'
+    : state.permissionMode === 'dangerously-skip-permissions' ? 'dangerously-skip-permissions'
+    : 'auto';
+  spawnOrchestrator(resolvedProjectDir, state.securityMode === 'strict' ? 'strict' : 'fast', undefined, resumePermission);
   return { success: true, projectDir: resolvedProjectDir, action };
 }
 
