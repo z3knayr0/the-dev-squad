@@ -21,8 +21,8 @@ export const EMPTY_RUNTIME: PipelineRuntimeState = {
   activeTurn: null,
 };
 
-export const TURN_IDLE_TIMEOUT_MS = 120_000;
-export const MAX_AUTO_RESUMES = 1;
+export const TURN_IDLE_TIMEOUT_MS = 300_000;
+export const MAX_AUTO_RESUMES = 3;
 
 export function summarizePrompt(prompt: string, maxLength: number = 140): string {
   const normalized = prompt.replace(/\s+/g, ' ').trim();
@@ -61,9 +61,9 @@ export function buildResumePrompt(agent: string, phase: string): string {
   if (agent === 'B' && phase === 'plan-review') {
     return [
       'Your previous review turn stalled mid-task.',
-      'Continue reviewing from where you left off.',
-      'Do not restart the review from scratch unless the plan changed while you were stalled.',
-      'Return your structured approval or questions as soon as you are ready.',
+      'Do not restart the review or summarize the plan.',
+      'Output your verdict immediately: {"status": "approved"} or {"status": "questions", "questions": ["..."]}.',
+      'Nothing else.',
     ].join(' ');
   }
 

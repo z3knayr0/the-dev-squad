@@ -1055,11 +1055,10 @@ async function runPlanReviewPhase(
         ].join('\n')
       : [
           `Review the plan at ${join(projectDir, 'plan.md')}`,
-          'Read the entire plan. Look for:',
-          '- Gaps or missing details',
-          '- Assumptions that are not verified',
-          '- Code that looks incomplete or guessed',
-          '- Anything the coder would need to interpret or ask about',
+          'Read the entire plan. Look for gaps, unverified assumptions, incomplete code, or anything the coder would need to guess at.',
+          '',
+          'Be concise. Do NOT summarize or repeat the plan back. Do NOT list what looks good.',
+          'Just give your verdict: approved, or list the specific issues.',
           '',
           'Respond with ONLY a JSON object: {"status": "approved"} or {"status": "questions", "questions": ["..."]}',
         ].join('\n');

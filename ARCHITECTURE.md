@@ -135,6 +135,7 @@ claude -p "<prompt>" \
 - `PIPELINE_PERMISSION_MODE` env var — `auto` (default), `plan`, or `dangerously-skip-permissions`
 - Role files and shared doctrine provide the team model; hooks provide the lighter safety/discipline guardrails around it
 - Session ids are now persisted mid-turn so stalled A/B runs can be recovered instead of always forcing a reset
+- Stall detection: 5-minute idle timeout, up to 3 auto-resume attempts before marking a turn as failed
 - Future hardening replaces direct host spawning with a sandbox runner; see [SECURITY-ROADMAP.md](SECURITY-ROADMAP.md) and [SANDBOX-RUNNER-PLAN.md](SANDBOX-RUNNER-PLAN.md)
 
 ## The Orchestrator
