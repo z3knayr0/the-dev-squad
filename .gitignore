@@ -43,5 +43,8 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# worktrees
+.worktrees/
+
 .vercel
 CLAUDE.md
