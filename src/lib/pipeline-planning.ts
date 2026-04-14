@@ -64,7 +64,8 @@ export function extractPlanningResearchSummary(events: PlanningEventLike[]): str
     const text = String(event.text || '').trim();
     if (text.length < 200) continue;
     if (WRITE_INTENT_PATTERN.test(text)) continue;
-    return text;
+    const MAX_SUMMARY_CHARS = 1500;
+    return text.length > MAX_SUMMARY_CHARS ? text.slice(0, MAX_SUMMARY_CHARS) + '...[truncated]' : text;
   }
 
   return null;

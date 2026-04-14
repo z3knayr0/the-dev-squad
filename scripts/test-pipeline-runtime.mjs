@@ -24,7 +24,7 @@ assert.equal(shouldMarkTurnStalled(0, TURN_IDLE_TIMEOUT_MS - 1), false);
 assert.equal(shouldMarkTurnStalled(0, TURN_IDLE_TIMEOUT_MS), true);
 
 assert.match(buildResumePrompt('A', 'planning'), /Do not repeat research/i);
-assert.match(buildResumePrompt('B', 'plan-review'), /Output your verdict immediately|approved|questions/i);
+assert.match(buildResumePrompt('B', 'plan-review'), /Output your verdict immediately/i);
 assert.equal(MAX_AUTO_RESUMES, 3);
 
 console.log('pipeline-runtime checks passed');

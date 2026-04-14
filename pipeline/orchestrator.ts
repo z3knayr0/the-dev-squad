@@ -260,6 +260,8 @@ function flush() {
   writeFileSync(eventsFile, JSON.stringify(state, null, 2));
 }
 
+const MAX_EVENTS = 500;
+
 function emit(
   agent: PipelineEvent['agent'],
   phase: string,
@@ -268,6 +270,9 @@ function emit(
   detail?: string
 ) {
   state.events.push({ time: new Date().toISOString(), agent, phase, type, text, detail });
+  if (state.events.length > MAX_EVENTS) {
+    state.events = state.events.slice(-MAX_EVENTS);
+  }
   flush();
 
   // Terminal output with color
