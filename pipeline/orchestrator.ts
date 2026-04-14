@@ -436,7 +436,7 @@ async function runClaudeTurn(
       templateFiles: agent === 'A'
         ? [
             join(BUILDUI_DIR, 'build-plan-template.md'),
-            join(BUILDUI_DIR, 'checklist-template.md'),
+            join(BUILDUI_DIR, 'checklist-a.md'),
           ]
         : undefined,
       forceHost: opts.forceHost,
