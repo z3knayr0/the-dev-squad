@@ -376,16 +376,31 @@ export function getSupervisorUpdate(
   };
 }
 
+// Module-level memoization cache for buildSupervisorSnapshot
+let _snapshotCache: { key: string; result: string } | null = null;
+
+function snapshotCacheKey(state: PipelineStateLike, pendingApproval: PendingApproval | null): string {
+  return [
+    state.events?.length ?? 0,
+    state.pipelineStatus ?? '',
+    state.currentPhase ?? '',
+    pendingApproval ? `${pendingApproval.agent}-${pendingApproval.approved}` : 'none',
+  ].join('|');
+}
+
 export function buildSupervisorSnapshot(
   state: PipelineStateLike,
   pendingApproval: PendingApproval | null
 ): string {
+  const key = snapshotCacheKey(state, pendingApproval);
+  if (_snapshotCache && _snapshotCache.key === key) return _snapshotCache.result;
+
   const activeTurn = state.runtime?.activeTurn;
   const recommendation = getSupervisorRecommendation(state, pendingApproval);
   const update = getSupervisorUpdate(state, pendingApproval);
   const executionPath = getExecutionPathStatus(state);
 
-  return [
+  const snapshot = [
     '[LIVE TEAM SNAPSHOT]',
     `Concept: ${state.concept || '(not set yet)'}`,
     `Phase: ${state.currentPhase || 'concept'}`,
@@ -411,4 +426,7 @@ export function buildSupervisorSnapshot(
     `- ${recommendation.title}: ${recommendation.detail}${recommendation.chatCommand ? ` (try: "${recommendation.chatCommand}")` : ''}`,
     '[END SNAPSHOT]',
   ].join('\n');
+
+  _snapshotCache = { key, result: snapshot };
+  return snapshot;
 }
