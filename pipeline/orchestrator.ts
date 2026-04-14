@@ -68,11 +68,11 @@ const MODEL = 'claude-opus-4-6';
 
 // Effort levels per agent — quality gates (B, D) get max reasoning depth
 const AGENT_EFFORT: Record<string, string> = {
-  A: 'high',   // Planner — follows template, high is enough
-  B: 'max',    // Reviewer — must find gaps, deep reasoning pays off
-  C: 'high',   // Coder — executing approved plan
-  D: 'max',    // Tester — must catch bugs, verify correctness
-  S: 'high',   // Supervisor — not currently used
+  A: 'high',    // Planner — follows template, high is enough
+  B: 'high',    // Reviewer — analytical but not compute-intensive
+  C: 'high',    // Coder — executing approved plan
+  D: 'normal',  // Tester — runs commands and reads output, not reasoning-heavy
+  S: 'high',    // Supervisor — not currently used
 };
 
 const runner = createRunner();
