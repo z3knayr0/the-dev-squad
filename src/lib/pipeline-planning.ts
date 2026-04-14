@@ -85,13 +85,6 @@ export function buildPlanningResearchPrompt(phase0Context: string, concept: stri
     '3. Research the concept — read docs, source code, web search, verify packages.',
     '4. Resolve every important unknown before the plan exists.',
     '5. When research is complete, say "Research complete" and STOP.',
-    '',
-    'RULES:',
-    '- Do NOT write plan.md in this turn.',
-    '- Do NOT create code files.',
-    '- Use Read/Glob/Grep to inspect the workspace. Do NOT use Bash just to inspect files.',
-    '- Do NOT use the Agent tool. Do NOT spawn sub-agents.',
-    '- Verify from source. No guessing.',
   ].join('\n');
 }
 
